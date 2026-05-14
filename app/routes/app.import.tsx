@@ -210,6 +210,7 @@ export default function ImportPage() {
 
   return (
     <Page
+      fullWidth
       title="Collection Importer"
       subtitle="Upload a CSV or Excel file to bulk-create Shopify collections"
       secondaryActions={[
