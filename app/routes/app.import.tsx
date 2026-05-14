@@ -213,8 +213,8 @@ export default function ImportPage() {
       title="Collection Importer"
       subtitle="Upload a CSV or Excel file to bulk-create Shopify collections"
       secondaryActions={[
-        { content: "Download CSV Template", url: "/app/template" },
-        { content: "Export Existing Collections", url: "/app/export" },
+        { content: "Download CSV Template", url: "/app/template", external: true },
+        { content: "Export Existing Collections", url: "/app/export", external: true },
       ]}
     >
       <Layout>
