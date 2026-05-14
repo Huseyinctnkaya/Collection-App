@@ -75,3 +75,23 @@ model ScheduledImport {
 
   @@index([shop, scheduledAt])
 }
+
+model NotificationSetting {
+  id               String  @id @default(cuid())
+  shop             String  @unique
+  email            String?
+  slackWebhookUrl  String?
+  notifyOnComplete Boolean @default(true)
+  notifyOnFail     Boolean @default(true)
+}
+
+model ImportTemplate {
+  id          String   @id @default(cuid())
+  shop        String
+  name        String
+  columnMap   String   // JSON: { userColumn: canonicalField }
+  createdAt   DateTime @default(now())
+
+  @@unique([shop, name])
+  @@index([shop])
+}

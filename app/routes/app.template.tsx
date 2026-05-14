@@ -12,6 +12,10 @@ const CSV_HEADERS = [
   "seo_title",
   "seo_description",
   "published",
+  "title_fr",
+  "description_fr",
+  "title_de",
+  "description_de",
 ];
 
 const SAMPLE_ROWS = [
@@ -26,6 +30,10 @@ const SAMPLE_ROWS = [
     "Summer Collection 2025",
     "Shop our best summer styles",
     "true",
+    "Collection Été",
+    "Nos meilleures tenues d'été",
+    "Sommerkollektion",
+    "Unsere besten Sommer-Styles",
   ],
   [
     "Sale Items",
@@ -38,6 +46,10 @@ const SAMPLE_ROWS = [
     "",
     "",
     "true",
+    "Articles en Solde",
+    "",
+    "Sonderangebote",
+    "",
   ],
   [
     "New Arrivals",
@@ -50,6 +62,10 @@ const SAMPLE_ROWS = [
     "New Arrivals",
     "Latest products just added to our store",
     "true",
+    "",
+    "",
+    "",
+    "",
   ],
 ];
 

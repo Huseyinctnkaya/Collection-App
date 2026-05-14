@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { notifyImportFinished } from "../services/notify.server";
 
 export async function action({ request }: ActionFunctionArgs) {
   const { topic, shop, payload } = await authenticate.webhook(request);
@@ -23,10 +24,19 @@ export async function action({ request }: ActionFunctionArgs) {
   const finalStatus =
     status === "completed" ? "COMPLETED" : status === "failed" ? "FAILED" : "PARTIAL";
 
-  await prisma.importJob.update({
+  const updatedJob = await prisma.importJob.update({
     where: { id: job.id },
     data: { status: finalStatus },
   });
+
+  notifyImportFinished(shop, {
+    id: updatedJob.id,
+    fileName: updatedJob.fileName,
+    status: finalStatus,
+    successCount: updatedJob.successCount,
+    errorCount: updatedJob.errorCount,
+    totalRows: updatedJob.totalRows,
+  }).catch(console.error);
 
   return new Response("OK", { status: 200 });
 }

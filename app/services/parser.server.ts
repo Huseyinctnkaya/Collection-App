@@ -29,6 +29,7 @@ export type CollectionRow = z.infer<typeof CollectionRowSchema>;
 export interface ParsedRow {
   row: number;
   data: CollectionRow | null;
+  rawRow: Record<string, string>;
   errors: Array<{ field: string; message: string }>;
 }
 
@@ -39,21 +40,22 @@ export interface ParseResult {
   errorRows: number;
 }
 
-function normalizeHeaders(headers: string[]): string[] {
-  return headers.map((h) =>
-    h
-      .toLowerCase()
-      .trim()
-      .replace(/\s+/g, "_")
-      .replace(/[^a-z0-9_]/g, "")
-  );
+function normalizeHeader(h: string): string {
+  return h.toLowerCase().trim().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+}
+
+function normalizeHeaders(headers: string[], columnMap?: Record<string, string>): string[] {
+  return headers.map((h) => {
+    const normalized = normalizeHeader(h);
+    return columnMap?.[normalized] ?? normalized;
+  });
 }
 
 function parseAndValidateRow(rawRow: Record<string, string>, rowIndex: number): ParsedRow {
   const result = CollectionRowSchema.safeParse(rawRow);
 
   if (result.success) {
-    return { row: rowIndex, data: result.data, errors: [] };
+    return { row: rowIndex, data: result.data, rawRow, errors: [] };
   }
 
   const errors = result.error.issues.map((issue) => ({
@@ -61,12 +63,12 @@ function parseAndValidateRow(rawRow: Record<string, string>, rowIndex: number): 
     message: issue.message,
   }));
 
-  return { row: rowIndex, data: null, errors };
+  return { row: rowIndex, data: null, rawRow, errors };
 }
 
-export async function parseCSV(buffer: Buffer<ArrayBufferLike>): Promise<ParseResult> {
+export async function parseCSV(buffer: Buffer<ArrayBufferLike>, columnMap?: Record<string, string>): Promise<ParseResult> {
   const records = csvParse(buffer as Buffer, {
-    columns: (headers: string[]) => normalizeHeaders(headers),
+    columns: (headers: string[]) => normalizeHeaders(headers, columnMap),
     skip_empty_lines: true,
     trim: true,
     bom: true,
@@ -82,7 +84,7 @@ export async function parseCSV(buffer: Buffer<ArrayBufferLike>): Promise<ParseRe
   };
 }
 
-export async function parseExcel(buffer: Buffer<ArrayBufferLike>): Promise<ParseResult> {
+export async function parseExcel(buffer: Buffer<ArrayBufferLike>, columnMap?: Record<string, string>): Promise<ParseResult> {
   const workbook = new ExcelJS.Workbook();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await (workbook.xlsx.load as any)(buffer);
@@ -97,7 +99,7 @@ export async function parseExcel(buffer: Buffer<ArrayBufferLike>): Promise<Parse
     const values = (row.values as (string | null)[]).slice(1); // ExcelJS is 1-indexed
 
     if (rowNumber === 1) {
-      headers = normalizeHeaders(values.map((v) => String(v ?? "")));
+      headers = normalizeHeaders(values.map((v) => String(v ?? "")), columnMap);
       return;
     }
 
@@ -118,7 +120,8 @@ export async function parseExcel(buffer: Buffer<ArrayBufferLike>): Promise<Parse
 
 export async function parseFile(
   buffer: Buffer<ArrayBufferLike>,
-  fileType: "csv" | "xlsx"
+  fileType: "csv" | "xlsx",
+  columnMap?: Record<string, string>
 ): Promise<ParseResult> {
-  return fileType === "csv" ? parseCSV(buffer) : parseExcel(buffer);
+  return fileType === "csv" ? parseCSV(buffer, columnMap) : parseExcel(buffer, columnMap);
 }

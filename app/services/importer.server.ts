@@ -1,5 +1,7 @@
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import prisma from "../db.server";
+import { notifyImportFinished } from "./notify.server";
+import { registerCollectionTranslations, extractLocaleFields } from "./translate.server";
 import type { CollectionRow, ParsedRow } from "./parser.server";
 import {
   COLLECTION_CREATE,
@@ -69,6 +71,13 @@ async function runBatchImport({
             await attachProducts(admin, collectionId, row.products, shop);
           }
 
+          if (collectionId) {
+            const localeFields = extractLocaleFields(parsedRow.rawRow);
+            if (Object.keys(localeFields).length > 0) {
+              await registerCollectionTranslations(admin, collectionId, localeFields).catch(console.error);
+            }
+          }
+
           successCount++;
         } catch (err) {
           errorCount++;
@@ -92,10 +101,19 @@ async function runBatchImport({
   }
 
   const finalStatus = errorCount === 0 ? "COMPLETED" : successCount > 0 ? "PARTIAL" : "FAILED";
-  await prisma.importJob.update({
+  const finalJob = await prisma.importJob.update({
     where: { id: jobId },
     data: { status: finalStatus, processedRows: processed, successCount, errorCount },
   });
+
+  notifyImportFinished(shop, {
+    id: finalJob.id,
+    fileName: finalJob.fileName,
+    status: finalStatus,
+    successCount,
+    errorCount,
+    totalRows: finalJob.totalRows,
+  }).catch(console.error);
 }
 
 async function createOrUpdateCollection(

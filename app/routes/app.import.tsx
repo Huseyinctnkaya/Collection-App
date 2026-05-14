@@ -31,14 +31,21 @@ const BULK_THRESHOLD = 50;
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
 
-  const recentJobs = await prisma.importJob.findMany({
-    where: { shop: session.shop },
-    orderBy: { createdAt: "desc" },
-    take: 10,
-    include: { errors: { take: 5 } },
-  });
+  const [recentJobs, templates] = await Promise.all([
+    prisma.importJob.findMany({
+      where: { shop: session.shop },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+      include: { errors: { take: 5 } },
+    }),
+    prisma.importTemplate.findMany({
+      where: { shop: session.shop },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, name: true, columnMap: true },
+    }),
+  ]);
 
-  return json({ recentJobs });
+  return json({ recentJobs, templates });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -50,6 +57,7 @@ export async function action({ request }: ActionFunctionArgs) {
   const file = formData.get("file") as File | null;
   const duplicateStrategy = (formData.get("duplicateStrategy") as string) === "overwrite" ? "overwrite" : "skip";
   const isDryRun = formData.get("dryRun") === "true";
+  const templateId = formData.get("templateId") as string | null;
   if (!file) return json({ error: "No file uploaded" }, { status: 400 });
 
   const ext = file.name.split(".").pop()?.toLowerCase();
@@ -59,9 +67,15 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const buffer = Buffer.from(await file.arrayBuffer());
 
+  let columnMap: Record<string, string> | undefined;
+  if (templateId) {
+    const tmpl = await prisma.importTemplate.findFirst({ where: { id: templateId, shop: session.shop } });
+    if (tmpl) columnMap = JSON.parse(tmpl.columnMap) as Record<string, string>;
+  }
+
   let parseResult;
   try {
-    parseResult = await parseFile(buffer, ext as "csv" | "xlsx");
+    parseResult = await parseFile(buffer, ext as "csv" | "xlsx", columnMap);
   } catch (err) {
     return json({ error: `Parse error: ${err instanceof Error ? err.message : "Unknown"}` }, { status: 422 });
   }
@@ -137,7 +151,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function ImportPage() {
-  const { recentJobs } = useLoaderData<typeof loader>();
+  const { recentJobs, templates } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const submit = useSubmit();
@@ -145,6 +159,7 @@ export default function ImportPage() {
 
   const [file, setFile] = useState<File | null>(null);
   const [duplicateStrategy, setDuplicateStrategy] = useState<"skip" | "overwrite">("skip");
+  const [templateId, setTemplateId] = useState("");
   const isSubmitting = navigation.state === "submitting";
 
   const activeJobId =
@@ -177,8 +192,9 @@ export default function ImportPage() {
     fd.append("file", file);
     fd.append("duplicateStrategy", duplicateStrategy);
     fd.append("dryRun", String(dryRun));
+    if (templateId) fd.append("templateId", templateId);
     submit(fd, { method: "post", encType: "multipart/form-data" });
-  }, [file, duplicateStrategy, submit]);
+  }, [file, duplicateStrategy, templateId, submit]);
 
   const statusBadge = (status: string) => {
     const map: Record<string, "success" | "warning" | "critical" | "info"> = {
@@ -226,6 +242,19 @@ export default function ImportPage() {
                   <Text as="span" tone="subdued">{file.name} — {(file.size / 1024).toFixed(1)} KB</Text>
                   <Button onClick={() => setFile(null)} variant="plain" tone="critical">Remove</Button>
                 </InlineStack>
+              )}
+
+              {templates.length > 0 && (
+                <Select
+                  label="Column mapping template"
+                  options={[
+                    { label: "None (use default column names)", value: "" },
+                    ...templates.map((t) => ({ label: t.name, value: t.id })),
+                  ]}
+                  value={templateId}
+                  onChange={setTemplateId}
+                  helpText="Apply a saved column mapping if your CSV uses different header names"
+                />
               )}
 
               <Select
@@ -376,6 +405,7 @@ export default function ImportPage() {
                 <List.Item><strong>rules</strong> — tag:summer,vendor:Nike</List.Item>
                 <List.Item><strong>seo_title / seo_description</strong></List.Item>
                 <List.Item><strong>published</strong> — true / false</List.Item>
+                <List.Item><strong>title_fr</strong> — French translation (any locale suffix works, e.g. title_de, description_fr)</List.Item>
               </List>
             </BlockStack>
           </Card>

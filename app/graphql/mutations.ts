@@ -119,3 +119,33 @@ export const PRODUCTS_BY_HANDLES = `#graphql
     }
   }
 `;
+
+export const TRANSLATABLE_RESOURCE = `#graphql
+  query translatableResource($resourceId: ID!) {
+    translatableResource(resourceId: $resourceId) {
+      resourceId
+      translatableContent {
+        key
+        value
+        digest
+        locale
+      }
+    }
+  }
+`;
+
+export const TRANSLATIONS_REGISTER = `#graphql
+  mutation translationsRegister($resourceId: ID!, $translations: [TranslationInput!]!) {
+    translationsRegister(resourceId: $resourceId, translations: $translations) {
+      translations {
+        key
+        value
+        locale
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
