@@ -210,7 +210,6 @@ export default function ImportPage() {
 
   return (
     <Page
-      fullWidth
       title="Collection Importer"
       subtitle="Upload a CSV or Excel file to bulk-create Shopify collections"
       secondaryActions={[
@@ -377,7 +376,7 @@ export default function ImportPage() {
                   columnContentTypes={["text", "text", "numeric", "numeric", "numeric", "text", "text"]}
                   headings={["File", "Status", "Total", "Success", "Errors", "Date", ""]}
                   rows={recentJobs.map((j) => [
-                    j.fileName,
+                    <span key={j.id} title={j.fileName} style={{ display: "block", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{j.fileName}</span>,
                     statusBadge(j.status),
                     j.totalRows,
                     j.successCount,
