@@ -92,53 +92,24 @@ export default function Index() {
 
         <Layout.Section variant="oneThird">
           <BlockStack gap="400">
-            <Card>
-              <BlockStack gap="300">
-                <InlineStack gap="200" blockAlign="center">
-                  <Icon source={ImportIcon} tone="base" />
-                  <Text as="h3" variant="headingMd">CSV & Excel</Text>
-                </InlineStack>
-                <Text as="p" variant="bodyMd" tone="subdued">
-                  Upload <strong>.csv</strong> or <strong>.xlsx</strong> files. Use the column headers from the template — title, handle, description, image_url, products, rules.
-                </Text>
-              </BlockStack>
-            </Card>
-
-            <Card>
-              <BlockStack gap="300">
-                <InlineStack gap="200" blockAlign="center">
-                  <Icon source={CollectionIcon} tone="base" />
-                  <Text as="h3" variant="headingMd">Smart & Manual</Text>
-                </InlineStack>
-                <Text as="p" variant="bodyMd" tone="subdued">
-                  Create <strong>manual collections</strong> with product handles, or <strong>smart collections</strong> using tag/vendor/type rules.
-                </Text>
-              </BlockStack>
-            </Card>
-
-            <Card>
-              <BlockStack gap="300">
-                <InlineStack gap="200" blockAlign="center">
-                  <Icon source={ClockIcon} tone="base" />
-                  <Text as="h3" variant="headingMd">Bulk API</Text>
-                </InlineStack>
-                <Text as="p" variant="bodyMd" tone="subdued">
-                  Imports with <strong>50+ rows</strong> run via Shopify's Bulk Operations API — no rate limits, processes in the background.
-                </Text>
-              </BlockStack>
-            </Card>
-
-            <Card>
-              <BlockStack gap="300">
-                <InlineStack gap="200" blockAlign="center">
-                  <Icon source={AlertCircleIcon} tone="base" />
-                  <Text as="h3" variant="headingMd">Validation</Text>
-                </InlineStack>
-                <Text as="p" variant="bodyMd" tone="subdued">
-                  Every row is validated before import. Errors are shown per-row with the exact field and reason.
-                </Text>
-              </BlockStack>
-            </Card>
+            {[
+              { icon: ImportIcon, title: "CSV & Excel", desc: <>Upload <strong>.csv</strong> or <strong>.xlsx</strong> files. Use the column headers from the template — title, handle, description, image_url, products, rules.</> },
+              { icon: CollectionIcon, title: "Smart & Manual", desc: <>Create <strong>manual collections</strong> with product handles, or <strong>smart collections</strong> using tag/vendor/type rules.</> },
+              { icon: ClockIcon, title: "Bulk API", desc: <>Imports with <strong>50+ rows</strong> run via Shopify's Bulk Operations API — no rate limits, processes in the background.</> },
+              { icon: AlertCircleIcon, title: "Validation", desc: <>Every row is validated before import. Errors are shown per-row with the exact field and reason.</> },
+            ].map(({ icon: Src, title, desc }) => (
+              <Card key={title}>
+                <BlockStack gap="200">
+                  <InlineStack gap="150" blockAlign="center" wrap={false}>
+                    <div style={{ width: 20, height: 20, flexShrink: 0, display: "flex" }}>
+                      <Icon source={Src} tone="base" />
+                    </div>
+                    <Text as="h3" variant="headingMd">{title}</Text>
+                  </InlineStack>
+                  <Text as="p" variant="bodyMd" tone="subdued">{desc}</Text>
+                </BlockStack>
+              </Card>
+            ))}
           </BlockStack>
         </Layout.Section>
       </Layout>
