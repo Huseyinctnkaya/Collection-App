@@ -60,18 +60,16 @@ export default function Index() {
                 ].map(({ step, title, desc }) => (
                   <BlockStack gap="150" key={step}>
                     <InlineStack gap="200" blockAlign="center">
-                      <Box
-                        background="bg-fill-brand"
-                        borderRadius="full"
-                        minWidth="28px"
-                        minHeight="28px"
-                      >
-                        <InlineStack align="center" blockAlign="center">
-                          <Text as="span" variant="bodySm" fontWeight="bold" tone="text-inverse">
-                            {step}
-                          </Text>
-                        </InlineStack>
-                      </Box>
+                      <div style={{
+                        width: 28, height: 28, borderRadius: "50%",
+                        background: "var(--p-color-bg-fill-brand)",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        flexShrink: 0,
+                        fontWeight: 700, fontSize: 13,
+                        color: "var(--p-color-text-brand-on-bg-fill)",
+                      }}>
+                        {step}
+                      </div>
                       <Text as="p" variant="bodyMd" fontWeight="semibold">
                         {title}
                       </Text>
