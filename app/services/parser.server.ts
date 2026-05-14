@@ -1,0 +1,123 @@
+import { parse as csvParse } from "csv-parse/sync";
+import ExcelJS from "exceljs";
+import { z } from "zod";
+
+export const CollectionRowSchema = z.object({
+  title: z.string().min(1, "Title is required"),
+  handle: z.string().optional(),
+  description: z.string().optional(),
+  image_url: z.string().url("Invalid image URL").optional().or(z.literal("")),
+  sort_order: z
+    .enum(["manual", "best-selling", "alpha-asc", "alpha-desc", "price-asc", "price-desc", "created", "created-desc"])
+    .optional()
+    .default("manual"),
+  // Smart collection rules: "tag:summer,vendor:Nike"
+  rules: z.string().optional(),
+  // Comma-separated product handles for manual collections
+  products: z.string().optional(),
+  seo_title: z.string().optional(),
+  seo_description: z.string().optional(),
+  published: z
+    .string()
+    .transform((v) => v.toLowerCase() !== "false" && v !== "0")
+    .optional()
+    .default("true"),
+});
+
+export type CollectionRow = z.infer<typeof CollectionRowSchema>;
+
+export interface ParsedRow {
+  row: number;
+  data: CollectionRow | null;
+  errors: Array<{ field: string; message: string }>;
+}
+
+export interface ParseResult {
+  rows: ParsedRow[];
+  totalRows: number;
+  validRows: number;
+  errorRows: number;
+}
+
+function normalizeHeaders(headers: string[]): string[] {
+  return headers.map((h) =>
+    h
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, "_")
+      .replace(/[^a-z0-9_]/g, "")
+  );
+}
+
+function parseAndValidateRow(rawRow: Record<string, string>, rowIndex: number): ParsedRow {
+  const result = CollectionRowSchema.safeParse(rawRow);
+
+  if (result.success) {
+    return { row: rowIndex, data: result.data, errors: [] };
+  }
+
+  const errors = result.error.issues.map((issue) => ({
+    field: issue.path.join("."),
+    message: issue.message,
+  }));
+
+  return { row: rowIndex, data: null, errors };
+}
+
+export async function parseCSV(buffer: Buffer): Promise<ParseResult> {
+  const records = csvParse(buffer, {
+    columns: (headers: string[]) => normalizeHeaders(headers),
+    skip_empty_lines: true,
+    trim: true,
+    bom: true,
+  }) as Record<string, string>[];
+
+  const rows = records.map((record, i) => parseAndValidateRow(record, i + 2));
+
+  return {
+    rows,
+    totalRows: rows.length,
+    validRows: rows.filter((r) => r.errors.length === 0).length,
+    errorRows: rows.filter((r) => r.errors.length > 0).length,
+  };
+}
+
+export async function parseExcel(buffer: Buffer): Promise<ParseResult> {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
+
+  const worksheet = workbook.worksheets[0];
+  if (!worksheet) throw new Error("Excel file has no worksheets");
+
+  const rows: ParsedRow[] = [];
+  let headers: string[] = [];
+
+  worksheet.eachRow((row, rowNumber) => {
+    const values = (row.values as (string | null)[]).slice(1); // ExcelJS is 1-indexed
+
+    if (rowNumber === 1) {
+      headers = normalizeHeaders(values.map((v) => String(v ?? "")));
+      return;
+    }
+
+    const rawRow = Object.fromEntries(
+      headers.map((h, i) => [h, String(values[i] ?? "")])
+    );
+
+    rows.push(parseAndValidateRow(rawRow, rowNumber));
+  });
+
+  return {
+    rows,
+    totalRows: rows.length,
+    validRows: rows.filter((r) => r.errors.length === 0).length,
+    errorRows: rows.filter((r) => r.errors.length > 0).length,
+  };
+}
+
+export async function parseFile(
+  buffer: Buffer,
+  fileType: "csv" | "xlsx"
+): Promise<ParseResult> {
+  return fileType === "csv" ? parseCSV(buffer) : parseExcel(buffer);
+}
