@@ -29,7 +29,9 @@ export default function App() {
         <Link to="/app/notifications">Notifications</Link>
         <Link to="/app/templates">Templates</Link>
       </NavMenu>
-      <Outlet />
+      <div style={{ paddingBottom: "48px" }}>
+        <Outlet />
+      </div>
     </AppProvider>
   );
 }
