@@ -18,10 +18,10 @@ import {
   Divider,
 } from "@shopify/polaris";
 import { useState, useCallback } from "react";
-import { authenticate } from "~/shopify.server";
-import prisma from "~/db.server";
-import { parseFile } from "~/services/parser.server";
-import { runImport } from "~/services/importer.server";
+import { authenticate } from "../shopify.server";
+import prisma from "../db.server";
+import { parseFile } from "../services/parser.server";
+import { runImport } from "../services/importer.server";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const BULK_THRESHOLD = 50;

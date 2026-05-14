@@ -1,5 +1,5 @@
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
-import prisma from "~/db.server";
+import prisma from "../db.server";
 import type { CollectionRow, ParsedRow } from "./parser.server";
 import {
   COLLECTION_CREATE,
@@ -7,7 +7,7 @@ import {
   BULK_OPERATION_RUN_MUTATION,
   STAGED_UPLOADS_CREATE,
   PRODUCTS_BY_HANDLES,
-} from "~/graphql/mutations";
+} from "../graphql/mutations";
 
 const BATCH_SIZE = 10; // collections per batch for standard API
 
