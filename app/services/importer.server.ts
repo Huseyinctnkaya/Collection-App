@@ -3,6 +3,8 @@ import prisma from "../db.server";
 import type { CollectionRow, ParsedRow } from "./parser.server";
 import {
   COLLECTION_CREATE,
+  COLLECTION_UPDATE,
+  COLLECTION_BY_HANDLE,
   COLLECTION_ADD_PRODUCTS,
   BULK_OPERATION_RUN_MUTATION,
   STAGED_UPLOADS_CREATE,
@@ -11,15 +13,18 @@ import {
 
 const BATCH_SIZE = 10; // collections per batch for standard API
 
+export type DuplicateStrategy = "skip" | "overwrite";
+
 interface ImportOptions {
   jobId: string;
   shop: string;
-  admin: AdminApiContext["admin"];
+  admin: AdminApiContext;
   rows: ParsedRow[];
-  useBulk: boolean; // true when rows > 50
+  useBulk: boolean;
+  duplicateStrategy: DuplicateStrategy;
 }
 
-export async function runImport({ jobId, shop, admin, rows, useBulk }: ImportOptions) {
+export async function runImport({ jobId, shop, admin, rows, useBulk, duplicateStrategy }: ImportOptions) {
   await prisma.importJob.update({
     where: { id: jobId },
     data: { status: "RUNNING" },
@@ -30,18 +35,22 @@ export async function runImport({ jobId, shop, admin, rows, useBulk }: ImportOpt
   if (useBulk) {
     await runBulkImport({ jobId, admin, rows: validRows });
   } else {
-    await runBatchImport({ jobId, admin, rows: validRows });
+    await runBatchImport({ jobId, shop, admin, rows: validRows, duplicateStrategy });
   }
 }
 
 async function runBatchImport({
   jobId,
+  shop,
   admin,
   rows,
+  duplicateStrategy,
 }: {
   jobId: string;
-  admin: AdminApiContext["admin"];
+  shop: string;
+  admin: AdminApiContext;
   rows: ParsedRow[];
+  duplicateStrategy: DuplicateStrategy;
 }) {
   let processed = 0;
   let successCount = 0;
@@ -54,7 +63,7 @@ async function runBatchImport({
       batch.map(async (parsedRow) => {
         const row = parsedRow.data!;
         try {
-          const collectionId = await createCollection(admin, row);
+          const collectionId = await createOrUpdateCollection(admin, row, duplicateStrategy);
 
           if (collectionId && row.products) {
             await attachProducts(admin, collectionId, row.products, shop);
@@ -89,37 +98,71 @@ async function runBatchImport({
   });
 }
 
+async function createOrUpdateCollection(
+  admin: AdminApiContext,
+  row: CollectionRow,
+  duplicateStrategy: DuplicateStrategy
+): Promise<string | null> {
+  const handle = row.handle || row.title.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+
+  // Check for existing collection by handle
+  const existingRes = await admin.graphql(COLLECTION_BY_HANDLE, { variables: { handle } });
+  const existingData = await existingRes.json();
+  const existing = existingData?.data?.collectionByHandle;
+
+  if (existing) {
+    if (duplicateStrategy === "skip") return existing.id;
+    // overwrite: update existing
+    return updateCollection(admin, existing.id, row);
+  }
+
+  return createCollection(admin, row);
+}
+
 async function createCollection(
-  admin: AdminApiContext["admin"],
+  admin: AdminApiContext,
   row: CollectionRow
 ): Promise<string | null> {
+  const input = buildCollectionInput(row);
+  const response = await admin.graphql(COLLECTION_CREATE, { variables: { input } });
+  const { data } = await response.json();
+  if (data?.collectionCreate?.userErrors?.length > 0) {
+    throw new Error(data.collectionCreate.userErrors[0].message);
+  }
+  return data?.collectionCreate?.collection?.id ?? null;
+}
+
+async function updateCollection(
+  admin: AdminApiContext,
+  id: string,
+  row: CollectionRow
+): Promise<string | null> {
+  const input = { id, ...buildCollectionInput(row) };
+  const response = await admin.graphql(COLLECTION_UPDATE, { variables: { input } });
+  const { data } = await response.json();
+  if (data?.collectionUpdate?.userErrors?.length > 0) {
+    throw new Error(data.collectionUpdate.userErrors[0].message);
+  }
+  return data?.collectionUpdate?.collection?.id ?? null;
+}
+
+function buildCollectionInput(row: CollectionRow): Record<string, unknown> {
   const input: Record<string, unknown> = {
     title: row.title,
     descriptionHtml: row.description ?? "",
     handle: row.handle || undefined,
-    sortOrder: row.sort_order?.toUpperCase().replace("-", "_"),
+    sortOrder: row.sort_order?.toUpperCase().replace(/-/g, "_"),
     seo: row.seo_title
       ? { title: row.seo_title, description: row.seo_description }
       : undefined,
     image: row.image_url ? { src: row.image_url } : undefined,
   };
-
-  if (row.rules) {
-    input.ruleSet = buildRuleSet(row.rules);
-  }
-
-  const response = await admin.graphql(COLLECTION_CREATE, { variables: { input } });
-  const { data } = await response.json();
-
-  if (data?.collectionCreate?.userErrors?.length > 0) {
-    throw new Error(data.collectionCreate.userErrors[0].message);
-  }
-
-  return data?.collectionCreate?.collection?.id ?? null;
+  if (row.rules) input.ruleSet = buildRuleSet(row.rules);
+  return input;
 }
 
 async function attachProducts(
-  admin: AdminApiContext["admin"],
+  admin: AdminApiContext,
   collectionId: string,
   productHandlesStr: string,
   _shop: string
@@ -154,7 +197,7 @@ async function runBulkImport({
   rows,
 }: {
   jobId: string;
-  admin: AdminApiContext["admin"];
+  admin: AdminApiContext;
   rows: ParsedRow[];
 }) {
   const jsonlLines = rows

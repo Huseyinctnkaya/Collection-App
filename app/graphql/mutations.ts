@@ -81,6 +81,32 @@ export const BULK_OPERATION_STATUS = `#graphql
   }
 `;
 
+export const COLLECTION_UPDATE = `#graphql
+  mutation collectionUpdate($input: CollectionInput!) {
+    collectionUpdate(input: $input) {
+      collection {
+        id
+        title
+        handle
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+export const COLLECTION_BY_HANDLE = `#graphql
+  query collectionByHandle($handle: String!) {
+    collectionByHandle(handle: $handle) {
+      id
+      handle
+      title
+    }
+  }
+`;
+
 export const PRODUCTS_BY_HANDLES = `#graphql
   query productsByHandles($query: String!) {
     products(first: 250, query: $query) {

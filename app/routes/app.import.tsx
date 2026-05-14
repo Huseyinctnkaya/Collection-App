@@ -1,6 +1,6 @@
 import { json, unstable_parseMultipartFormData, unstable_createMemoryUploadHandler } from "@remix-run/node";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { useActionData, useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
+import { useActionData, useLoaderData, useNavigation, useSubmit, useRevalidator } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -16,8 +16,10 @@ import {
   ProgressBar,
   DataTable,
   Divider,
+  Select,
 } from "@shopify/polaris";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
+import { useFetcher } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { parseFile } from "../services/parser.server";
@@ -46,6 +48,7 @@ export async function action({ request }: ActionFunctionArgs) {
   const formData = await unstable_parseMultipartFormData(request, uploadHandler);
 
   const file = formData.get("file") as File | null;
+  const duplicateStrategy = (formData.get("duplicateStrategy") as string) === "overwrite" ? "overwrite" : "skip";
   if (!file) return json({ error: "No file uploaded" }, { status: 400 });
 
   const ext = file.name.split(".").pop()?.toLowerCase();
@@ -96,6 +99,7 @@ export async function action({ request }: ActionFunctionArgs) {
     admin,
     rows: parseResult.rows,
     useBulk,
+    duplicateStrategy,
   }).catch(async (err) => {
     await prisma.importJob.update({
       where: { id: job.id },
@@ -118,9 +122,31 @@ export default function ImportPage() {
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const submit = useSubmit();
+  const { revalidate } = useRevalidator();
 
   const [file, setFile] = useState<File | null>(null);
+  const [duplicateStrategy, setDuplicateStrategy] = useState<"skip" | "overwrite">("skip");
   const isSubmitting = navigation.state === "submitting";
+
+  const activeJobId =
+    actionData && "jobId" in actionData ? (actionData as { jobId: string }).jobId : null;
+  const jobFetcher = useFetcher<{ job: { status: string; processedRows: number; totalRows: number; successCount: number; errorCount: number } }>();
+  const activeJob = jobFetcher.data?.job;
+  const isJobRunning = activeJob?.status === "RUNNING" || activeJob?.status === "PARSING" || activeJob?.status === "PENDING";
+
+  useEffect(() => {
+    if (!activeJobId) return;
+    jobFetcher.load(`/app/jobs/${activeJobId}`);
+  }, [activeJobId]);
+
+  useEffect(() => {
+    if (!activeJobId || !isJobRunning) return;
+    const timer = setInterval(() => {
+      jobFetcher.load(`/app/jobs/${activeJobId}`);
+      if (!isJobRunning) revalidate();
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [activeJobId, isJobRunning, revalidate]);
 
   const handleDrop = useCallback((_: File[], acceptedFiles: File[]) => {
     setFile(acceptedFiles[0] ?? null);
@@ -130,8 +156,9 @@ export default function ImportPage() {
     if (!file) return;
     const fd = new FormData();
     fd.append("file", file);
+    fd.append("duplicateStrategy", duplicateStrategy);
     submit(fd, { method: "post", encType: "multipart/form-data" });
-  }, [file, submit]);
+  }, [file, duplicateStrategy, submit]);
 
   const statusBadge = (status: string) => {
     const map: Record<string, "success" | "warning" | "critical" | "info"> = {
@@ -149,6 +176,13 @@ export default function ImportPage() {
     <Page
       title="Collection Importer"
       subtitle="Upload a CSV or Excel file to bulk-create Shopify collections"
+      secondaryActions={[
+        {
+          content: "Download CSV Template",
+          url: "/app/template",
+          external: false,
+        },
+      ]}
     >
       <Layout>
         <Layout.Section>
@@ -177,6 +211,16 @@ export default function ImportPage() {
                 </InlineStack>
               )}
 
+              <Select
+                label="If collection already exists"
+                options={[
+                  { label: "Skip (keep existing)", value: "skip" },
+                  { label: "Overwrite (update existing)", value: "overwrite" },
+                ]}
+                value={duplicateStrategy}
+                onChange={(v) => setDuplicateStrategy(v as "skip" | "overwrite")}
+              />
+
               <Button
                 variant="primary"
                 disabled={!file || isSubmitting}
@@ -194,18 +238,46 @@ export default function ImportPage() {
 
               {"jobId" in (actionData ?? {}) && (() => {
                 const d = actionData as { jobId: string; totalRows: number; validRows: number; errorRows: number; useBulk: boolean };
+                const progress = activeJob && activeJob.totalRows > 0
+                  ? Math.round((activeJob.processedRows / activeJob.totalRows) * 100)
+                  : 0;
+                const isDone = activeJob && ["COMPLETED", "FAILED", "PARTIAL"].includes(activeJob.status);
                 return (
-                  <Banner tone={d.errorRows > 0 ? "warning" : "success"}>
-                    <BlockStack gap="200">
-                      <Text as="p" fontWeight="bold">Import started — Job ID: {d.jobId}</Text>
-                      <List>
-                        <List.Item>Total rows: {d.totalRows}</List.Item>
-                        <List.Item>Valid: {d.validRows}</List.Item>
-                        {d.errorRows > 0 && <List.Item>Parse errors: {d.errorRows}</List.Item>}
-                        <List.Item>Mode: {d.useBulk ? "Bulk Operation (async)" : "Standard (batched)"}</List.Item>
-                      </List>
-                    </BlockStack>
-                  </Banner>
+                  <BlockStack gap="300">
+                    <Banner tone={d.errorRows > 0 ? "warning" : "success"}>
+                      <BlockStack gap="200">
+                        <Text as="p" fontWeight="bold">Import started</Text>
+                        <List>
+                          <List.Item>Total rows: {d.totalRows}</List.Item>
+                          <List.Item>Valid: {d.validRows}</List.Item>
+                          {d.errorRows > 0 && <List.Item>Parse errors: {d.errorRows}</List.Item>}
+                          <List.Item>Mode: {d.useBulk ? "Bulk Operation (async)" : "Standard (batched)"}</List.Item>
+                        </List>
+                      </BlockStack>
+                    </Banner>
+                    {activeJob && (
+                      <Card>
+                        <BlockStack gap="300">
+                          <InlineStack align="space-between">
+                            <Text as="p" variant="bodyMd" fontWeight="semibold">
+                              {isDone ? "Import complete" : "Importing…"}
+                            </Text>
+                            {statusBadge(activeJob.status)}
+                          </InlineStack>
+                          {!d.useBulk && (
+                            <ProgressBar progress={progress} tone={isDone && activeJob.errorCount > 0 ? "critical" : "highlight"} />
+                          )}
+                          <InlineStack gap="400">
+                            <Text as="span" variant="bodySm" tone="subdued">Processed: {activeJob.processedRows}/{activeJob.totalRows}</Text>
+                            <Text as="span" variant="bodySm" tone="success">Success: {activeJob.successCount}</Text>
+                            {activeJob.errorCount > 0 && (
+                              <Text as="span" variant="bodySm" tone="critical">Errors: {activeJob.errorCount}</Text>
+                            )}
+                          </InlineStack>
+                        </BlockStack>
+                      </Card>
+                    )}
+                  </BlockStack>
                 );
               })()}
             </BlockStack>
@@ -221,8 +293,8 @@ export default function ImportPage() {
                 <Text as="p" tone="subdued">No imports yet.</Text>
               ) : (
                 <DataTable
-                  columnContentTypes={["text", "text", "numeric", "numeric", "numeric", "text"]}
-                  headings={["File", "Status", "Total", "Success", "Errors", "Date"]}
+                  columnContentTypes={["text", "text", "numeric", "numeric", "numeric", "text", "text"]}
+                  headings={["File", "Status", "Total", "Success", "Errors", "Date", ""]}
                   rows={recentJobs.map((j) => [
                     j.fileName,
                     statusBadge(j.status),
@@ -230,6 +302,7 @@ export default function ImportPage() {
                     j.successCount,
                     j.errorCount,
                     new Date(j.createdAt).toLocaleDateString(),
+                    <Button variant="plain" url={`/app/jobs/${j.id}`} key={j.id}>View</Button>,
                   ])}
                 />
               )}

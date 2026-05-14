@@ -64,8 +64,8 @@ function parseAndValidateRow(rawRow: Record<string, string>, rowIndex: number): 
   return { row: rowIndex, data: null, errors };
 }
 
-export async function parseCSV(buffer: Buffer): Promise<ParseResult> {
-  const records = csvParse(buffer, {
+export async function parseCSV(buffer: Buffer<ArrayBufferLike>): Promise<ParseResult> {
+  const records = csvParse(buffer as Buffer, {
     columns: (headers: string[]) => normalizeHeaders(headers),
     skip_empty_lines: true,
     trim: true,
@@ -82,9 +82,10 @@ export async function parseCSV(buffer: Buffer): Promise<ParseResult> {
   };
 }
 
-export async function parseExcel(buffer: Buffer): Promise<ParseResult> {
+export async function parseExcel(buffer: Buffer<ArrayBufferLike>): Promise<ParseResult> {
   const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(buffer);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await (workbook.xlsx.load as any)(buffer);
 
   const worksheet = workbook.worksheets[0];
   if (!worksheet) throw new Error("Excel file has no worksheets");
@@ -116,7 +117,7 @@ export async function parseExcel(buffer: Buffer): Promise<ParseResult> {
 }
 
 export async function parseFile(
-  buffer: Buffer,
+  buffer: Buffer<ArrayBufferLike>,
   fileType: "csv" | "xlsx"
 ): Promise<ParseResult> {
   return fileType === "csv" ? parseCSV(buffer) : parseExcel(buffer);
