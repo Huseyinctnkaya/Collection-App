@@ -49,6 +49,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const file = formData.get("file") as File | null;
   const duplicateStrategy = (formData.get("duplicateStrategy") as string) === "overwrite" ? "overwrite" : "skip";
+  const isDryRun = formData.get("dryRun") === "true";
   if (!file) return json({ error: "No file uploaded" }, { status: 400 });
 
   const ext = file.name.split(".").pop()?.toLowerCase();
@@ -91,6 +92,24 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   const useBulk = parseResult.validRows > BULK_THRESHOLD;
+
+  // Dry run: return preview without importing
+  if (isDryRun) {
+    return json({
+      dryRun: true,
+      totalRows: parseResult.totalRows,
+      validRows: parseResult.validRows,
+      errorRows: parseResult.errorRows,
+      preview: parseResult.rows.slice(0, 20).map((r) => ({
+        row: r.row,
+        valid: r.errors.length === 0,
+        title: r.data?.title ?? "—",
+        handle: r.data?.handle ?? "—",
+        type: r.data?.rules ? "smart" : "manual",
+        errors: r.errors,
+      })),
+    });
+  }
 
   // Run import in background (fire and forget for long jobs)
   runImport({
@@ -152,11 +171,12 @@ export default function ImportPage() {
     setFile(acceptedFiles[0] ?? null);
   }, []);
 
-  const handleSubmit = useCallback(() => {
+  const handleSubmit = useCallback((dryRun = false) => {
     if (!file) return;
     const fd = new FormData();
     fd.append("file", file);
     fd.append("duplicateStrategy", duplicateStrategy);
+    fd.append("dryRun", String(dryRun));
     submit(fd, { method: "post", encType: "multipart/form-data" });
   }, [file, duplicateStrategy, submit]);
 
@@ -177,11 +197,8 @@ export default function ImportPage() {
       title="Collection Importer"
       subtitle="Upload a CSV or Excel file to bulk-create Shopify collections"
       secondaryActions={[
-        {
-          content: "Download CSV Template",
-          url: "/app/template",
-          external: false,
-        },
+        { content: "Download CSV Template", url: "/app/template" },
+        { content: "Export Existing Collections", url: "/app/export" },
       ]}
     >
       <Layout>
@@ -221,14 +238,48 @@ export default function ImportPage() {
                 onChange={(v) => setDuplicateStrategy(v as "skip" | "overwrite")}
               />
 
-              <Button
-                variant="primary"
-                disabled={!file || isSubmitting}
-                loading={isSubmitting}
-                onClick={handleSubmit}
-              >
-                {isSubmitting ? "Importing..." : "Start Import"}
-              </Button>
+              <InlineStack gap="300">
+                <Button
+                  variant="primary"
+                  disabled={!file || isSubmitting}
+                  loading={isSubmitting}
+                  onClick={() => handleSubmit(false)}
+                >
+                  {isSubmitting ? "Importing..." : "Start Import"}
+                </Button>
+                <Button
+                  disabled={!file || isSubmitting}
+                  onClick={() => handleSubmit(true)}
+                >
+                  Preview
+                </Button>
+              </InlineStack>
+
+              {"dryRun" in (actionData ?? {}) && (() => {
+                const d = actionData as { dryRun: true; totalRows: number; validRows: number; errorRows: number; preview: Array<{ row: number; valid: boolean; title: string; handle: string; type: string; errors: Array<{ field: string; message: string }> }> };
+                return (
+                  <BlockStack gap="300">
+                    <Banner tone={d.errorRows > 0 ? "warning" : "success"}>
+                      <Text as="p" fontWeight="bold">
+                        Preview — {d.validRows} valid, {d.errorRows} errors (nothing was imported)
+                      </Text>
+                    </Banner>
+                    <DataTable
+                      columnContentTypes={["numeric", "text", "text", "text", "text"]}
+                      headings={["Row", "Title", "Handle", "Type", "Status"]}
+                      rows={d.preview.map((p) => [
+                        p.row,
+                        p.title,
+                        p.handle,
+                        p.type,
+                        p.valid
+                          ? <Badge tone="success">Valid</Badge>
+                          : <Badge tone="critical">{p.errors[0]?.message ?? "Error"}</Badge>,
+                      ])}
+                    />
+                  </BlockStack>
+                );
+              })()}
 
               {"error" in (actionData ?? {}) && (
                 <Banner tone="critical">

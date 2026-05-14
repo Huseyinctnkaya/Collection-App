@@ -60,3 +60,18 @@ model ImportError {
   rawData String?
   job     ImportJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
 }
+
+model ScheduledImport {
+  id                String   @id @default(cuid())
+  shop              String
+  scheduledAt       DateTime
+  fileName          String
+  fileData          Bytes
+  fileType          String
+  duplicateStrategy String   @default("skip")
+  status            String   @default("PENDING")
+  jobId             String?
+  createdAt         DateTime @default(now())
+
+  @@index([shop, scheduledAt])
+}
