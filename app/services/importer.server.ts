@@ -144,9 +144,20 @@ async function createCollection(
   const input = buildCollectionInput(row);
   const response = await admin.graphql(COLLECTION_CREATE, { variables: { input } });
   const { data } = await response.json();
-  if (data?.collectionCreate?.userErrors?.length > 0) {
-    throw new Error(data.collectionCreate.userErrors[0].message);
+  const errors: Array<{ field: string[]; message: string }> = data?.collectionCreate?.userErrors ?? [];
+
+  // If only image failed, retry without the image rather than failing the whole row
+  if (errors.length > 0 && errors.every((e) => e.message.toLowerCase().includes("image"))) {
+    const inputWithoutImage = { ...input, image: undefined };
+    const retry = await admin.graphql(COLLECTION_CREATE, { variables: { input: inputWithoutImage } });
+    const retryData = await retry.json();
+    if (retryData?.data?.collectionCreate?.userErrors?.length > 0) {
+      throw new Error(retryData.data.collectionCreate.userErrors[0].message);
+    }
+    return retryData?.data?.collectionCreate?.collection?.id ?? null;
   }
+
+  if (errors.length > 0) throw new Error(errors[0].message);
   return data?.collectionCreate?.collection?.id ?? null;
 }
 
@@ -158,9 +169,19 @@ async function updateCollection(
   const input = { id, ...buildCollectionInput(row) };
   const response = await admin.graphql(COLLECTION_UPDATE, { variables: { input } });
   const { data } = await response.json();
-  if (data?.collectionUpdate?.userErrors?.length > 0) {
-    throw new Error(data.collectionUpdate.userErrors[0].message);
+  const errors: Array<{ field: string[]; message: string }> = data?.collectionUpdate?.userErrors ?? [];
+
+  if (errors.length > 0 && errors.every((e) => e.message.toLowerCase().includes("image"))) {
+    const inputWithoutImage = { ...input, image: undefined };
+    const retry = await admin.graphql(COLLECTION_UPDATE, { variables: { input: inputWithoutImage } });
+    const retryData = await retry.json();
+    if (retryData?.data?.collectionUpdate?.userErrors?.length > 0) {
+      throw new Error(retryData.data.collectionUpdate.userErrors[0].message);
+    }
+    return retryData?.data?.collectionUpdate?.collection?.id ?? null;
   }
+
+  if (errors.length > 0) throw new Error(errors[0].message);
   return data?.collectionUpdate?.collection?.id ?? null;
 }
 
@@ -290,15 +311,22 @@ async function runBulkImport({
   // Completion is handled via webhook (bulk_operations/finish)
 }
 
+const RULE_COLUMN_ALIASES: Record<string, string> = {
+  PRODUCT_TYPE: "TYPE",
+  PRODUCT_VENDOR: "VENDOR",
+  PRODUCT_TAG: "TAG",
+  PRODUCT_TITLE: "TITLE",
+};
+
 function buildRuleSet(rulesStr: string) {
   const rules = rulesStr.split(",").map((r) => {
-    const [column, condition, conditionStr] = r.trim().split(":");
-    return {
-      column: column?.toUpperCase() ?? "TAG",
-      relation: "EQUALS",
-      condition: condition ?? conditionStr ?? "",
-    };
-  });
+    const colonIdx = r.indexOf(":");
+    if (colonIdx === -1) return null;
+    const rawColumn = r.slice(0, colonIdx).trim().toUpperCase();
+    const condition = r.slice(colonIdx + 1).trim();
+    const column = RULE_COLUMN_ALIASES[rawColumn] ?? rawColumn;
+    return { column, relation: "EQUALS", condition };
+  }).filter(Boolean);
 
   return { rules, appliedDisjunctively: false };
 }

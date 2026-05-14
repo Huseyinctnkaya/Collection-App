@@ -8,9 +8,25 @@ export const CollectionRowSchema = z.object({
   description: z.string().optional(),
   image_url: z.string().url("Invalid image URL").optional().or(z.literal("")),
   sort_order: z
-    .enum(["manual", "best-selling", "alpha-asc", "alpha-desc", "price-asc", "price-desc", "created", "created-desc"])
+    .string()
     .optional()
-    .default("manual"),
+    .transform((v) => {
+      const aliases: Record<string, string> = {
+        "price-descending": "price-desc",
+        "price-ascending": "price-asc",
+        "alpha-ascending": "alpha-asc",
+        "alpha-descending": "alpha-desc",
+        "created-descending": "created-desc",
+        "created-ascending": "created",
+        "best_selling": "best-selling",
+      };
+      const normalized = (v ?? "manual").toLowerCase().trim();
+      return aliases[normalized] ?? normalized;
+    })
+    .pipe(
+      z.enum(["manual", "best-selling", "alpha-asc", "alpha-desc", "price-asc", "price-desc", "created", "created-desc"])
+        .default("manual")
+    ),
   // Smart collection rules: "tag:summer,vendor:Nike"
   rules: z.string().optional(),
   // Comma-separated product handles for manual collections
