@@ -1,6 +1,6 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, useNavigate } from "@remix-run/react";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import { useLoaderData, useNavigate, useSubmit, useNavigation } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -19,18 +19,38 @@ import {
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { rollbackJob } from "../services/rollback.server";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
 
   const job = await prisma.importJob.findFirst({
     where: { id: params.id, shop: session.shop },
-    include: { errors: { orderBy: { row: "asc" } } },
+    include: {
+      errors: { orderBy: { row: "asc" } },
+      actions: { select: { id: true, action: true, collectionHandle: true } },
+    },
   });
 
   if (!job) throw new Response("Not Found", { status: 404 });
-
   return json({ job });
+}
+
+export async function action({ request, params }: ActionFunctionArgs) {
+  const { session, admin } = await authenticate.admin(request);
+  const formData = await request.formData();
+  const intent = formData.get("intent");
+
+  if (intent === "rollback") {
+    try {
+      const result = await rollbackJob(admin, params.id!, session.shop);
+      return json({ rollback: result });
+    } catch (err) {
+      return json({ error: err instanceof Error ? err.message : "Rollback failed" }, { status: 400 });
+    }
+  }
+
+  return json({ error: "Unknown intent" }, { status: 400 });
 }
 
 const STATUS_TONE: Record<string, "success" | "warning" | "critical" | "info"> = {
@@ -45,14 +65,26 @@ const STATUS_TONE: Record<string, "success" | "warning" | "critical" | "info"> =
 export default function JobDetail() {
   const { job } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
+  const submit = useSubmit();
+  const navigation = useNavigation();
 
-  const progress =
-    job.totalRows > 0 ? Math.round((job.processedRows / job.totalRows) * 100) : 0;
+  const isRollingBack = navigation.state === "submitting";
+  const progress = job.totalRows > 0 ? Math.round((job.processedRows / job.totalRows) * 100) : 0;
   const isDone = ["COMPLETED", "FAILED", "PARTIAL"].includes(job.status);
+  const canRollback = isDone && !job.rolledBack && job.actions.length > 0 && job.status !== "FAILED";
+  const createdCount = job.actions.filter((a) => a.action === "created").length;
+  const updatedCount = job.actions.filter((a) => a.action === "updated").length;
+
+  const handleRollback = () => {
+    if (!confirm(`This will delete ${createdCount} created and restore ${updatedCount} updated collections. Continue?`)) return;
+    const fd = new FormData();
+    fd.append("intent", "rollback");
+    submit(fd, { method: "post" });
+  };
 
   return (
     <Page
-      title={`Import Job`}
+      title="Import Job"
       subtitle={job.fileName}
       backAction={{ content: "Import", onAction: () => navigate("/app/import") }}
     >
@@ -62,13 +94,24 @@ export default function JobDetail() {
           <Card>
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
-                <Text as="h2" variant="headingMd">Status</Text>
-                <Badge tone={STATUS_TONE[job.status] ?? "info"}>{job.status}</Badge>
+                <InlineStack gap="300" blockAlign="center">
+                  <Text as="h2" variant="headingMd">Status</Text>
+                  <Badge tone={STATUS_TONE[job.status] ?? "info"}>{job.status}</Badge>
+                  {job.rolledBack && <Badge tone="warning">Rolled back</Badge>}
+                </InlineStack>
+                {canRollback && (
+                  <Button
+                    tone="critical"
+                    loading={isRollingBack}
+                    disabled={isRollingBack}
+                    onClick={handleRollback}
+                  >
+                    Rollback Import
+                  </Button>
+                )}
               </InlineStack>
               <Divider />
-              {!isDone && (
-                <ProgressBar progress={progress} tone="highlight" />
-              )}
+              {!isDone && <ProgressBar progress={progress} tone="highlight" />}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
                 {[
                   { label: "Total rows", value: job.totalRows },
@@ -84,6 +127,20 @@ export default function JobDetail() {
                   </Box>
                 ))}
               </div>
+              {job.actions.length > 0 && (
+                <InlineStack gap="400">
+                  {createdCount > 0 && (
+                    <Text as="span" variant="bodySm" tone="subdued">
+                      {createdCount} collection{createdCount !== 1 ? "s" : ""} created
+                    </Text>
+                  )}
+                  {updatedCount > 0 && (
+                    <Text as="span" variant="bodySm" tone="subdued">
+                      {updatedCount} collection{updatedCount !== 1 ? "s" : ""} updated
+                    </Text>
+                  )}
+                </InlineStack>
+              )}
               <InlineStack gap="200">
                 <Text as="span" variant="bodySm" tone="subdued">
                   File: <strong>{job.fileName}</strong> ({job.fileType.toUpperCase()})
@@ -91,11 +148,6 @@ export default function JobDetail() {
                 <Text as="span" variant="bodySm" tone="subdued">
                   Started: {new Date(job.createdAt).toLocaleString()}
                 </Text>
-                {job.bulkOperationId && (
-                  <Text as="span" variant="bodySm" tone="subdued">
-                    Bulk ID: {job.bulkOperationId}
-                  </Text>
-                )}
               </InlineStack>
             </BlockStack>
           </Card>
@@ -106,9 +158,7 @@ export default function JobDetail() {
             <Card>
               <BlockStack gap="400">
                 <InlineStack align="space-between" blockAlign="center">
-                  <Text as="h2" variant="headingMd">
-                    Errors ({job.errors.length})
-                  </Text>
+                  <Text as="h2" variant="headingMd">Errors ({job.errors.length})</Text>
                   <Button
                     variant="plain"
                     onClick={() => {
@@ -132,13 +182,11 @@ export default function JobDetail() {
                     Download error CSV
                   </Button>
                 </InlineStack>
-
                 {job.status === "PARTIAL" && (
                   <Banner tone="warning">
                     <p>Import completed partially. {job.successCount} collections were created, {job.errorCount} rows failed.</p>
                   </Banner>
                 )}
-
                 <DataTable
                   columnContentTypes={["numeric", "text", "text", "text"]}
                   headings={["Row", "Field", "Error", "Raw data"]}
@@ -146,9 +194,7 @@ export default function JobDetail() {
                     e.row,
                     e.field ?? "—",
                     e.message,
-                    e.rawData
-                      ? JSON.stringify(JSON.parse(e.rawData)).slice(0, 80) + "…"
-                      : "—",
+                    e.rawData ? JSON.stringify(JSON.parse(e.rawData)).slice(0, 80) + "…" : "—",
                   ])}
                 />
               </BlockStack>

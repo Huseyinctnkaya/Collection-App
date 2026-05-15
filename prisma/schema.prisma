@@ -34,21 +34,36 @@ model Session {
 }
 
 model ImportJob {
-  id              String       @id @default(cuid())
+  id              String         @id @default(cuid())
   shop            String
   fileName        String
   fileType        String
-  status          String       @default("PENDING")
-  totalRows       Int          @default(0)
-  processedRows   Int          @default(0)
-  successCount    Int          @default(0)
-  errorCount      Int          @default(0)
+  status          String         @default("PENDING")
+  totalRows       Int            @default(0)
+  processedRows   Int            @default(0)
+  successCount    Int            @default(0)
+  errorCount      Int            @default(0)
   bulkOperationId String?
+  rolledBack      Boolean        @default(false)
   errors          ImportError[]
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  actions         ImportAction[]
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
 
   @@index([shop])
+}
+
+model ImportAction {
+  id               String    @id @default(cuid())
+  jobId            String
+  collectionId     String
+  collectionHandle String
+  action           String    // "created" | "updated"
+  previousData     String?   // JSON snapshot before update
+  createdAt        DateTime  @default(now())
+  job              ImportJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
 }
 
 model ImportError {
@@ -62,18 +77,21 @@ model ImportError {
 }
 
 model ScheduledImport {
-  id                String   @id @default(cuid())
+  id                String    @id @default(cuid())
   shop              String
   scheduledAt       DateTime
   fileName          String
   fileData          Bytes
   fileType          String
-  duplicateStrategy String   @default("skip")
-  status            String   @default("PENDING")
+  duplicateStrategy String    @default("skip")
+  status            String    @default("PENDING")
+  recurrence        String    @default("none") // none | daily | weekly | monthly
+  nextRunAt         DateTime?
   jobId             String?
-  createdAt         DateTime @default(now())
+  createdAt         DateTime  @default(now())
 
   @@index([shop, scheduledAt])
+  @@index([status, nextRunAt])
 }
 
 model NotificationSetting {

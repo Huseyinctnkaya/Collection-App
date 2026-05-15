@@ -54,6 +54,9 @@ export async function action({ request }: ActionFunctionArgs) {
   const file = formData.get("file") as File | null;
   const scheduledAt = formData.get("scheduledAt") as string;
   const duplicateStrategy = formData.get("duplicateStrategy") === "overwrite" ? "overwrite" : "skip";
+  const recurrence = (["daily", "weekly", "monthly"].includes(formData.get("recurrence") as string)
+    ? formData.get("recurrence")
+    : "none") as string;
 
   if (!file) return json({ error: "No file provided" }, { status: 400 });
   if (!scheduledAt) return json({ error: "No scheduled time provided" }, { status: 400 });
@@ -78,10 +81,12 @@ export async function action({ request }: ActionFunctionArgs) {
       fileData: fileBuffer,
       fileType: ext,
       duplicateStrategy,
+      recurrence,
+      nextRunAt: recurrence !== "none" ? scheduledDate : null,
     },
   });
 
-  return json({ scheduled: scheduled.id, scheduledAt: scheduledDate.toISOString() });
+  return json({ scheduled: scheduled.id, scheduledAt: scheduledDate.toISOString(), recurrence });
 }
 
 export default function SchedulePage() {
@@ -93,6 +98,7 @@ export default function SchedulePage() {
   const [file, setFile] = useState<File | null>(null);
   const [scheduledAt, setScheduledAt] = useState("");
   const [duplicateStrategy, setDuplicateStrategy] = useState<"skip" | "overwrite">("skip");
+  const [recurrence, setRecurrence] = useState("none");
   const isSubmitting = navigation.state === "submitting";
 
   const handleDrop = useCallback((_: File[], accepted: File[]) => {
@@ -106,8 +112,9 @@ export default function SchedulePage() {
     fd.append("file", file);
     fd.append("scheduledAt", scheduledAt);
     fd.append("duplicateStrategy", duplicateStrategy);
+    fd.append("recurrence", recurrence);
     submit(fd, { method: "post", encType: "multipart/form-data" });
-  }, [file, scheduledAt, duplicateStrategy, submit]);
+  }, [file, scheduledAt, duplicateStrategy, recurrence, submit]);
 
   const handleDelete = useCallback((id: string) => {
     const fd = new FormData();
@@ -168,6 +175,19 @@ export default function SchedulePage() {
                 onChange={(v) => setDuplicateStrategy(v as "skip" | "overwrite")}
               />
 
+              <Select
+                label="Repeat"
+                options={[
+                  { label: "No repeat (one-time)", value: "none" },
+                  { label: "Daily", value: "daily" },
+                  { label: "Weekly", value: "weekly" },
+                  { label: "Monthly", value: "monthly" },
+                ]}
+                value={recurrence}
+                onChange={setRecurrence}
+                helpText="Recurring imports re-run automatically using the same file"
+              />
+
               {"error" in (actionData ?? {}) && (
                 <Banner tone="critical">
                   <p>{(actionData as { error: string }).error}</p>
@@ -201,12 +221,13 @@ export default function SchedulePage() {
                 <Text as="p" tone="subdued">No scheduled imports.</Text>
               ) : (
                 <DataTable
-                  columnContentTypes={["text", "text", "text", "text", "text"]}
-                  headings={["File", "Scheduled for", "Status", "Strategy", ""]}
+                  columnContentTypes={["text", "text", "text", "text", "text", "text"]}
+                  headings={["File", "Scheduled for", "Status", "Repeat", "Strategy", ""]}
                   rows={scheduled.map((s) => [
                     s.fileName,
                     new Date(s.scheduledAt).toLocaleString(),
                     <Badge tone={statusTone(s.status)} key={s.id}>{s.status}</Badge>,
+                    s.recurrence !== "none" ? <Badge key={`r-${s.id}`}>{s.recurrence}</Badge> : "—",
                     s.duplicateStrategy,
                     s.status === "PENDING"
                       ? <Button variant="plain" tone="critical" onClick={() => handleDelete(s.id)} key={s.id}>Cancel</Button>

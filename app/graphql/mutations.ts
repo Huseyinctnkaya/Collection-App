@@ -103,6 +103,23 @@ export const COLLECTION_BY_HANDLE = `#graphql
       id
       handle
       title
+      descriptionHtml
+      sortOrder
+      image { src altText }
+      seo { title description }
+      ruleSet {
+        appliedDisjunctively
+        rules { column relation condition }
+      }
+    }
+  }
+`;
+
+export const COLLECTION_DELETE = `#graphql
+  mutation collectionDelete($input: CollectionDeleteInput!) {
+    collectionDelete(input: $input) {
+      deletedCollectionId
+      userErrors { field message }
     }
   }
 `;

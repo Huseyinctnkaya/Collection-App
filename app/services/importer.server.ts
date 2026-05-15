@@ -7,6 +7,7 @@ import {
   COLLECTION_CREATE,
   COLLECTION_UPDATE,
   COLLECTION_BY_HANDLE,
+  COLLECTION_DELETE,
   COLLECTION_ADD_PRODUCTS,
   BULK_OPERATION_RUN_MUTATION,
   STAGED_UPLOADS_CREATE,
@@ -65,7 +66,7 @@ async function runBatchImport({
       batch.map(async (parsedRow) => {
         const row = parsedRow.data!;
         try {
-          const collectionId = await createOrUpdateCollection(admin, row, duplicateStrategy);
+          const collectionId = await createOrUpdateCollection(admin, row, duplicateStrategy, jobId);
 
           if (collectionId && row.products) {
             await attachProducts(admin, collectionId, row.products, shop);
@@ -119,22 +120,37 @@ async function runBatchImport({
 async function createOrUpdateCollection(
   admin: AdminApiContext,
   row: CollectionRow,
-  duplicateStrategy: DuplicateStrategy
+  duplicateStrategy: DuplicateStrategy,
+  jobId: string
 ): Promise<string | null> {
   const handle = row.handle || row.title.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
 
-  // Check for existing collection by handle
   const existingRes = await admin.graphql(COLLECTION_BY_HANDLE, { variables: { handle } });
   const existingData = await existingRes.json();
   const existing = existingData?.data?.collectionByHandle;
 
   if (existing) {
     if (duplicateStrategy === "skip") return existing.id;
-    // overwrite: update existing
+    // Snapshot existing state before overwriting
+    await prisma.importAction.create({
+      data: {
+        jobId,
+        collectionId: existing.id,
+        collectionHandle: handle,
+        action: "updated",
+        previousData: JSON.stringify(existing),
+      },
+    });
     return updateCollection(admin, existing.id, row);
   }
 
-  return createCollection(admin, row);
+  const newId = await createCollection(admin, row);
+  if (newId) {
+    await prisma.importAction.create({
+      data: { jobId, collectionId: newId, collectionHandle: handle, action: "created" },
+    });
+  }
+  return newId;
 }
 
 async function createCollection(
