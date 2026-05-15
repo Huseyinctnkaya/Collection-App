@@ -157,12 +157,17 @@ async function startImportFromBuffer({
       totalRows: parseResult.totalRows,
       validRows: parseResult.validRows,
       errorRows: parseResult.errorRows,
-      preview: parseResult.rows.slice(0, 20).map((r) => ({
+      preview: parseResult.rows.slice(0, 24).map((r) => ({
         row: r.row,
         valid: r.errors.length === 0,
         title: r.data?.title ?? "—",
-        handle: r.data?.handle ?? "—",
+        handle: r.data?.handle ?? "",
         type: r.data?.rules ? "smart" : "manual",
+        rules: r.data?.rules ?? "",
+        products: r.data?.products ?? "",
+        sortOrder: r.data?.sort_order ?? "manual",
+        imageUrl: r.data?.image_url ?? "",
+        description: r.data?.description ?? "",
         errors: r.errors,
       })),
     });
@@ -325,27 +330,76 @@ export default function ImportPage() {
               </InlineStack>
 
               {"dryRun" in (actionData ?? {}) && (() => {
-                const d = actionData as { dryRun: true; totalRows: number; validRows: number; errorRows: number; preview: Array<{ row: number; valid: boolean; title: string; handle: string; type: string; errors: Array<{ field: string; message: string }> }> };
+                type PreviewItem = { row: number; valid: boolean; title: string; handle: string; type: string; rules: string; products: string; sortOrder: string; imageUrl: string; description: string; errors: Array<{ field: string; message: string }> };
+                const d = actionData as { dryRun: true; totalRows: number; validRows: number; errorRows: number; preview: PreviewItem[] };
                 return (
-                  <BlockStack gap="300">
+                  <BlockStack gap="400">
                     <Banner tone={d.errorRows > 0 ? "warning" : "success"}>
-                      <Text as="p" fontWeight="bold">
-                        Preview — {d.validRows} valid, {d.errorRows} errors (nothing was imported)
-                      </Text>
+                      <InlineStack gap="400">
+                        <Text as="span" fontWeight="bold">{d.validRows} valid</Text>
+                        {d.errorRows > 0 && <Text as="span" tone="critical" fontWeight="bold">{d.errorRows} errors</Text>}
+                        <Text as="span" tone="subdued">Nothing was imported — this is a preview only</Text>
+                      </InlineStack>
                     </Banner>
-                    <DataTable
-                      columnContentTypes={["numeric", "text", "text", "text", "text"]}
-                      headings={["Row", "Title", "Handle", "Type", "Status"]}
-                      rows={d.preview.map((p) => [
-                        p.row,
-                        p.title,
-                        p.handle,
-                        p.type,
-                        p.valid
-                          ? <Badge tone="success">Valid</Badge>
-                          : <Badge tone="critical">{p.errors[0]?.message ?? "Error"}</Badge>,
-                      ])}
-                    />
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "16px" }}>
+                      {d.preview.map((p) => (
+                        <div key={p.row} style={{ position: "relative", borderRadius: "12px", overflow: "hidden", border: p.valid ? "1px solid #e1e3e5" : "2px solid #d72c0d", background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>
+                          {/* Collection image / gradient header */}
+                          <div style={{
+                            height: 120,
+                            background: p.imageUrl
+                              ? `url(${p.imageUrl}) center/cover no-repeat`
+                              : p.type === "smart"
+                                ? "linear-gradient(135deg, #667eea 0%, #764ba2 100%)"
+                                : "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
+                            display: "flex",
+                            alignItems: "flex-end",
+                            padding: "8px",
+                          }}>
+                            <InlineStack gap="100">
+                              <Badge tone={p.type === "smart" ? "success" : "new"}>{p.type === "smart" ? "Smart" : "Manual"}</Badge>
+                              {!p.valid && <Badge tone="critical">Error</Badge>}
+                            </InlineStack>
+                          </div>
+                          {/* Card body */}
+                          <div style={{ padding: "12px" }}>
+                            <Text as="p" variant="bodyMd" fontWeight="semibold" truncate>{p.title}</Text>
+                            {p.handle && (
+                              <Text as="p" variant="bodySm" tone="subdued">/{p.handle}</Text>
+                            )}
+                            {p.type === "smart" && p.rules && (
+                              <div style={{ marginTop: 6 }}>
+                                {p.rules.split(",").slice(0, 3).map((rule, i) => (
+                                  <div key={i} style={{ fontSize: 11, color: "#6d7175", lineHeight: "1.6" }}>
+                                    {rule.trim()}
+                                  </div>
+                                ))}
+                                {p.rules.split(",").length > 3 && (
+                                  <div style={{ fontSize: 11, color: "#6d7175" }}>+{p.rules.split(",").length - 3} more rules</div>
+                                )}
+                              </div>
+                            )}
+                            {p.type !== "smart" && p.products && (
+                              <div style={{ marginTop: 6, fontSize: 11, color: "#6d7175" }}>
+                                {p.products.split(",").length} product(s)
+                              </div>
+                            )}
+                            {!p.valid && p.errors.length > 0 && (
+                              <div style={{ marginTop: 6, fontSize: 11, color: "#d72c0d" }}>
+                                {p.errors[0].message}
+                              </div>
+                            )}
+                          </div>
+                          {/* Row number chip */}
+                          <div style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.45)", color: "#fff", borderRadius: 4, padding: "2px 6px", fontSize: 11 }}>
+                            row {p.row}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {d.totalRows > 24 && (
+                      <Text as="p" tone="subdued">Showing first 24 of {d.totalRows} rows.</Text>
+                    )}
                   </BlockStack>
                 );
               })()}

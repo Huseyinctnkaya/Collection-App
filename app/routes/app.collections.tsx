@@ -112,6 +112,7 @@ export default function CollectionsPage() {
     <Page
       title="Collection Manager"
       subtitle="View, search and bulk manage your Shopify collections"
+      primaryAction={{ content: "Create Collection", url: "/app/create-collection" }}
       backAction={{ content: "Home", url: "/app" }}
     >
       <TitleBar title="Collection Manager" />
