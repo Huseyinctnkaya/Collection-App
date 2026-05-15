@@ -87,8 +87,8 @@ export default function Index() {
   const navigate = useNavigate();
 
   return (
-    <Page title="Collection Importer" subtitle="Bulk-create Shopify collections from a CSV or Excel file">
-      <TitleBar title="Collection Importer" />
+    <Page title="Collection Studio" subtitle="Bulk-create Shopify collections from a CSV or Excel file">
+      <TitleBar title="Collection Studio" />
       <BlockStack gap="600">
 
         {/* Primary CTA */}

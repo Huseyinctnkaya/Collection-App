@@ -1,7 +1,7 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "c89e872cb9a5a3d6fc89642dce20a439"
-name = "collection-importer"
+name = "collection-studio"
 application_url = "https://example.com"
 embedded = true
 

@@ -1,5 +1,5 @@
 {
-  "name": "collection-importer",
+  "name": "collection-studio",
   "private": true,
   "scripts": {
     "build": "remix vite:build",
