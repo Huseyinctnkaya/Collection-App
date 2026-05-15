@@ -102,6 +102,32 @@ export default function Index() {
           </InlineStack>
         </Card>
 
+        {/* How it works */}
+        <Card>
+          <BlockStack gap="400">
+            <Text as="h2" variant="headingMd">How it works</Text>
+            <Divider />
+            <InlineStack gap="0" wrap={false}>
+              {STEPS.map(({ n, text }, i) => (
+                <div key={n} style={{ flex: 1, display: "flex", alignItems: "flex-start", gap: 10 }}>
+                  <div style={{
+                    width: 28, height: 28, borderRadius: "50%", flexShrink: 0,
+                    background: "var(--p-color-bg-fill-brand)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontWeight: 700, fontSize: 13,
+                    color: "var(--p-color-text-brand-on-bg-fill)",
+                  }}>
+                    {n}
+                  </div>
+                  <div style={{ paddingTop: 4, paddingRight: i < STEPS.length - 1 ? 16 : 0 }}>
+                    <Text as="p" variant="bodySm">{text}</Text>
+                  </div>
+                </div>
+              ))}
+            </InlineStack>
+          </BlockStack>
+        </Card>
+
         {/* Feature grid */}
         <BlockStack gap="300">
           <Text as="h2" variant="headingMd">Features</Text>
@@ -137,32 +163,6 @@ export default function Index() {
             ))}
           </div>
         </BlockStack>
-
-        {/* How it works */}
-        <Card>
-          <BlockStack gap="400">
-            <Text as="h2" variant="headingMd">How it works</Text>
-            <Divider />
-            <InlineStack gap="0" wrap={false}>
-              {STEPS.map(({ n, text }, i) => (
-                <div key={n} style={{ flex: 1, display: "flex", alignItems: "flex-start", gap: 10 }}>
-                  <div style={{
-                    width: 28, height: 28, borderRadius: "50%", flexShrink: 0,
-                    background: "var(--p-color-bg-fill-brand)",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontWeight: 700, fontSize: 13,
-                    color: "var(--p-color-text-brand-on-bg-fill)",
-                  }}>
-                    {n}
-                  </div>
-                  <div style={{ paddingTop: 4, paddingRight: i < STEPS.length - 1 ? 16 : 0 }}>
-                    <Text as="p" variant="bodySm">{text}</Text>
-                  </div>
-                </div>
-              ))}
-            </InlineStack>
-          </BlockStack>
-        </Card>
 
       </BlockStack>
     </Page>
