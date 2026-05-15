@@ -2,22 +2,22 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { useNavigate } from "@remix-run/react";
 import {
   Page,
-  Layout,
   Card,
   BlockStack,
   InlineStack,
   Text,
   Button,
-  Badge,
   Divider,
-  Box,
   Icon,
+  Box,
 } from "@shopify/polaris";
 import {
   ImportIcon,
-  CollectionIcon,
-  AlertCircleIcon,
+  ExportIcon,
   ClockIcon,
+  NotificationIcon,
+  ThemeTemplateIcon,
+  LanguageTranslateIcon,
 } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -27,92 +27,144 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return null;
 };
 
+const QUICK_ACTIONS = [
+  {
+    icon: ImportIcon,
+    title: "Import Collections",
+    desc: "Upload a CSV or XLSX file to bulk-create or update collections",
+    url: "/app/import",
+    primary: true,
+  },
+  {
+    icon: ExportIcon,
+    title: "Export Collections",
+    desc: "Download all existing collections as a CSV file",
+    url: "/app/export",
+    primary: false,
+  },
+  {
+    icon: ClockIcon,
+    title: "Schedule Import",
+    desc: "Upload a file now and run the import at a future time",
+    url: "/app/schedule",
+    primary: false,
+  },
+  {
+    icon: NotificationIcon,
+    title: "Notifications",
+    desc: "Get notified via email or Slack when an import finishes",
+    url: "/app/notifications",
+    primary: false,
+  },
+  {
+    icon: ThemeTemplateIcon,
+    title: "Import Templates",
+    desc: "Save column mappings to reuse with different CSV formats",
+    url: "/app/templates",
+    primary: false,
+  },
+  {
+    icon: LanguageTranslateIcon,
+    title: "Multi-language",
+    desc: "Add locale columns like title_fr or description_de to your CSV",
+    url: "/app/import",
+    primary: false,
+  },
+];
+
+const STEPS = [
+  { n: "1", text: "Download the CSV template" },
+  { n: "2", text: "Fill in your collection data" },
+  { n: "3", text: "Upload and start import" },
+  { n: "4", text: "Collections go live instantly" },
+];
+
 export default function Index() {
   const navigate = useNavigate();
 
   return (
-    <Page
-      title="Collection Importer"
-      subtitle="Bulk-create Shopify collections from a CSV or Excel file"
-      primaryAction={{
-        content: "Start Import",
-        onAction: () => navigate("/app/import"),
-      }}
-    >
+    <Page title="Collection Importer" subtitle="Bulk-create Shopify collections from a CSV or Excel file">
       <TitleBar title="Collection Importer" />
-      <Layout>
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
-              <InlineStack align="space-between" blockAlign="center">
-                <Text as="h2" variant="headingMd">
-                  How it works
-                </Text>
-                <Badge tone="success">Ready to use</Badge>
-              </InlineStack>
-              <Divider />
-              <InlineStack gap="600" wrap>
-                {[
-                  { step: "1", title: "Download template", desc: "Get the sample CSV file and fill in your collection data" },
-                  { step: "2", title: "Upload your file", desc: "Drag and drop a .csv or .xlsx file — up to 10 MB" },
-                  { step: "3", title: "Validate & import", desc: "We check every row before sending to Shopify" },
-                  { step: "4", title: "Done", desc: "Collections appear live in your store instantly" },
-                ].map(({ step, title, desc }) => (
-                  <BlockStack gap="150" key={step}>
-                    <InlineStack gap="200" blockAlign="center">
-                      <div style={{
-                        width: 28, height: 28, borderRadius: "50%",
-                        background: "var(--p-color-bg-fill-brand)",
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        flexShrink: 0,
-                        fontWeight: 700, fontSize: 13,
-                        color: "var(--p-color-text-brand-on-bg-fill)",
-                      }}>
-                        {step}
-                      </div>
-                      <Text as="p" variant="bodyMd" fontWeight="semibold">
-                        {title}
-                      </Text>
-                    </InlineStack>
-                    <Text as="p" variant="bodyMd" tone="subdued">
-                      {desc}
-                    </Text>
-                  </BlockStack>
-                ))}
-              </InlineStack>
-              <Divider />
-              <InlineStack align="end">
-                <Button variant="primary" onClick={() => navigate("/app/import")}>
-                  Go to Import
-                </Button>
-              </InlineStack>
-            </BlockStack>
-          </Card>
-        </Layout.Section>
+      <BlockStack gap="600">
 
-        <Layout.Section variant="oneThird">
-          <BlockStack gap="400">
-            {[
-              { icon: ImportIcon, title: "CSV & Excel", desc: <>Upload <strong>.csv</strong> or <strong>.xlsx</strong> files. Use the column headers from the template — title, handle, description, image_url, products, rules.</> },
-              { icon: CollectionIcon, title: "Smart & Manual", desc: <>Create <strong>manual collections</strong> with product handles, or <strong>smart collections</strong> using tag/vendor/type rules.</> },
-              { icon: ClockIcon, title: "Bulk API", desc: <>Imports with <strong>50+ rows</strong> run via Shopify's Bulk Operations API — no rate limits, processes in the background.</> },
-              { icon: AlertCircleIcon, title: "Validation", desc: <>Every row is validated before import. Errors are shown per-row with the exact field and reason.</> },
-            ].map(({ icon: Src, title, desc }) => (
-              <Card key={title}>
-                <BlockStack gap="200">
-                  <InlineStack gap="150" blockAlign="center" wrap={false}>
-                    <div style={{ width: 20, height: 20, flexShrink: 0, display: "flex" }}>
-                      <Icon source={Src} tone="base" />
-                    </div>
-                    <Text as="h3" variant="headingMd">{title}</Text>
-                  </InlineStack>
-                  <Text as="p" variant="bodyMd" tone="subdued">{desc}</Text>
-                </BlockStack>
-              </Card>
+        {/* Primary CTA */}
+        <Card>
+          <InlineStack align="space-between" blockAlign="center" wrap={false}>
+            <BlockStack gap="100">
+              <Text as="h2" variant="headingMd">Ready to import?</Text>
+              <Text as="p" variant="bodyMd" tone="subdued">
+                Upload a file with up to thousands of collections — validated row by row.
+              </Text>
+            </BlockStack>
+            <Button variant="primary" size="large" onClick={() => navigate("/app/import")}>
+              Start Import
+            </Button>
+          </InlineStack>
+        </Card>
+
+        {/* Feature grid */}
+        <BlockStack gap="300">
+          <Text as="h2" variant="headingMd">Features</Text>
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+            gap: "12px",
+          }}>
+            {QUICK_ACTIONS.map(({ icon: Src, title, desc, url }) => (
+              <div
+                key={title}
+                onClick={() => navigate(url)}
+                style={{ cursor: "pointer", height: "100%" }}
+              >
+                <Card>
+                  <BlockStack gap="300">
+                    <InlineStack gap="200" blockAlign="center" wrap={false}>
+                      <Box
+                        background="bg-surface-secondary"
+                        borderRadius="200"
+                        padding="150"
+                      >
+                        <div style={{ width: 20, height: 20, display: "flex" }}>
+                          <Icon source={Src} tone="base" />
+                        </div>
+                      </Box>
+                      <Text as="h3" variant="headingSm">{title}</Text>
+                    </InlineStack>
+                    <Text as="p" variant="bodySm" tone="subdued">{desc}</Text>
+                  </BlockStack>
+                </Card>
+              </div>
             ))}
+          </div>
+        </BlockStack>
+
+        {/* How it works */}
+        <Card>
+          <BlockStack gap="400">
+            <Text as="h2" variant="headingMd">How it works</Text>
+            <Divider />
+            <InlineStack gap="0" wrap={false}>
+              {STEPS.map(({ n, text }, i) => (
+                <div key={n} style={{ flex: 1, display: "flex", alignItems: "flex-start", gap: 10 }}>
+                  <div style={{
+                    width: 28, height: 28, borderRadius: "50%", flexShrink: 0,
+                    background: "var(--p-color-bg-fill-brand)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontWeight: 700, fontSize: 13,
+                    color: "var(--p-color-text-brand-on-bg-fill)",
+                  }}>
+                    {n}
+                  </div>
+                  <div style={{ paddingTop: 4, paddingRight: i < STEPS.length - 1 ? 16 : 0 }}>
+                    <Text as="p" variant="bodySm">{text}</Text>
+                  </div>
+                </div>
+              ))}
+            </InlineStack>
           </BlockStack>
-        </Layout.Section>
-      </Layout>
+        </Card>
+
+      </BlockStack>
     </Page>
   );
 }
