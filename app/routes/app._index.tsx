@@ -114,7 +114,7 @@ export default function Index() {
               <div
                 key={title}
                 onClick={() => navigate(url)}
-                style={{ cursor: "pointer", height: "100%" }}
+                style={{ cursor: "pointer", display: "grid" }}
               >
                 <Card>
                   <BlockStack gap="300">
