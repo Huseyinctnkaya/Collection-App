@@ -16,6 +16,8 @@ const CSV_HEADERS = [
   "description_fr",
   "title_de",
   "description_de",
+  "metafield.custom.care_instructions",
+  "metafield.custom.season.single_line_text_field",
 ];
 
 const SAMPLE_ROWS = [
@@ -34,6 +36,8 @@ const SAMPLE_ROWS = [
     "Nos meilleures tenues d'été",
     "Sommerkollektion",
     "Unsere besten Sommer-Styles",
+    "Hand wash only",
+    "Summer",
   ],
   [
     "Sale Items",
@@ -50,6 +54,8 @@ const SAMPLE_ROWS = [
     "",
     "Sonderangebote",
     "",
+    "",
+    "",
   ],
   [
     "New Arrivals",
@@ -62,6 +68,8 @@ const SAMPLE_ROWS = [
     "New Arrivals",
     "Latest products just added to our store",
     "true",
+    "",
+    "",
     "",
     "",
     "",

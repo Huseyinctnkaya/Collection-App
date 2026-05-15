@@ -124,6 +124,35 @@ export const COLLECTION_DELETE = `#graphql
   }
 `;
 
+export const COLLECTIONS_LIST = `#graphql
+  query collectionsList($first: Int!, $after: String, $query: String) {
+    collections(first: $first, after: $after, query: $query) {
+      edges {
+        node {
+          id
+          title
+          handle
+          updatedAt
+          image { src altText }
+          productsCount { count }
+          ruleSet { rules { column relation condition } }
+          seo { title description }
+        }
+      }
+      pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
+    }
+  }
+`;
+
+export const METAFIELDS_SET = `#graphql
+  mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+    metafieldsSet(metafields: $metafields) {
+      metafields { id namespace key value }
+      userErrors { field message }
+    }
+  }
+`;
+
 export const PRODUCTS_BY_HANDLES = `#graphql
   query productsByHandles($query: String!) {
     products(first: 250, query: $query) {

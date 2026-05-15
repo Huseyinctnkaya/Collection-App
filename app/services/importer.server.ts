@@ -2,6 +2,8 @@ import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import prisma from "../db.server";
 import { notifyImportFinished } from "./notify.server";
 import { registerCollectionTranslations, extractLocaleFields } from "./translate.server";
+import { extractMetafields } from "./parser.server";
+import { METAFIELDS_SET } from "../graphql/mutations";
 import type { CollectionRow, ParsedRow } from "./parser.server";
 import {
   COLLECTION_CREATE,
@@ -76,6 +78,21 @@ async function runBatchImport({
             const localeFields = extractLocaleFields(parsedRow.rawRow);
             if (Object.keys(localeFields).length > 0) {
               await registerCollectionTranslations(admin, collectionId, localeFields).catch(console.error);
+            }
+
+            const metafields = extractMetafields(parsedRow.rawRow);
+            if (metafields.length > 0) {
+              await admin.graphql(METAFIELDS_SET, {
+                variables: {
+                  metafields: metafields.map((m) => ({
+                    ownerId: collectionId,
+                    namespace: m.namespace,
+                    key: m.key,
+                    value: m.value,
+                    type: m.type,
+                  })),
+                },
+              }).catch(console.error);
             }
           }
 

@@ -27,6 +27,8 @@ export default function App() {
         <Link to="/app/import">Collection Import</Link>
         <Link to="/app/history">Import History</Link>
         <Link to="/app/schedule">Schedule Import</Link>
+        <Link to="/app/collections">Collection Manager</Link>
+        <Link to="/app/health">Health Checker</Link>
         <Link to="/app/notifications">Notifications</Link>
         <Link to="/app/templates">Templates</Link>
       </NavMenu>
