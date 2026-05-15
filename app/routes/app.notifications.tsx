@@ -35,6 +35,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const email = (formData.get("email") as string) || null;
   const slackWebhookUrl = (formData.get("slackWebhookUrl") as string) || null;
+  const flowWebhookUrl = (formData.get("flowWebhookUrl") as string) || null;
   const notifyOnComplete = formData.get("notifyOnComplete") === "true";
   const notifyOnFail = formData.get("notifyOnFail") === "true";
 
@@ -46,10 +47,14 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ error: "Slack webhook URL must start with https://hooks.slack.com/" }, { status: 400 });
   }
 
+  if (flowWebhookUrl && !flowWebhookUrl.startsWith("https://")) {
+    return json({ error: "Flow webhook URL must start with https://" }, { status: 400 });
+  }
+
   await prisma.notificationSetting.upsert({
     where: { shop: session.shop },
-    create: { shop: session.shop, email, slackWebhookUrl, notifyOnComplete, notifyOnFail },
-    update: { email, slackWebhookUrl, notifyOnComplete, notifyOnFail },
+    create: { shop: session.shop, email, slackWebhookUrl, flowWebhookUrl, notifyOnComplete, notifyOnFail },
+    update: { email, slackWebhookUrl, flowWebhookUrl, notifyOnComplete, notifyOnFail },
   });
 
   return json({ saved: true });
@@ -63,6 +68,7 @@ export default function NotificationsPage() {
 
   const [email, setEmail] = useState(settings?.email ?? "");
   const [slackWebhookUrl, setSlackWebhookUrl] = useState(settings?.slackWebhookUrl ?? "");
+  const [flowWebhookUrl, setFlowWebhookUrl] = useState(settings?.flowWebhookUrl ?? "");
   const [notifyOnComplete, setNotifyOnComplete] = useState(settings?.notifyOnComplete ?? true);
   const [notifyOnFail, setNotifyOnFail] = useState(settings?.notifyOnFail ?? true);
 
@@ -132,6 +138,25 @@ export default function NotificationsPage() {
 
               <Card>
                 <BlockStack gap="400">
+                  <InlineStack align="space-between" blockAlign="center">
+                    <Text as="h2" variant="headingMd">Shopify Flow / Automation Webhook</Text>
+                    <Badge tone="info">POST on finish</Badge>
+                  </InlineStack>
+                  <Divider />
+                  <TextField
+                    label="Webhook URL"
+                    name="flowWebhookUrl"
+                    value={flowWebhookUrl}
+                    onChange={setFlowWebhookUrl}
+                    placeholder="https://your-flow-endpoint.com/webhook"
+                    helpText="A POST request with import summary JSON will be sent here when an import finishes. Works with Shopify Flow 'Receive webhook', Make, Zapier, or any HTTP trigger."
+                    autoComplete="off"
+                  />
+                </BlockStack>
+              </Card>
+
+              <Card>
+                <BlockStack gap="400">
                   <Text as="h2" variant="headingMd">When to Notify</Text>
                   <Divider />
                   <Checkbox
@@ -174,6 +199,11 @@ export default function NotificationsPage() {
               <Text as="p" variant="bodyMd" fontWeight="semibold">Slack</Text>
               <Text as="p" tone="subdued" variant="bodySm">
                 Go to your Slack workspace → Settings → Integrations → Incoming Webhooks → Add New Webhook.
+              </Text>
+              <Divider />
+              <Text as="p" variant="bodyMd" fontWeight="semibold">Shopify Flow</Text>
+              <Text as="p" tone="subdued" variant="bodySm">
+                In Flow, create an automation with a "Receive webhook from app" trigger. Copy the webhook URL and paste it here. The payload includes: shop, importId, fileName, status, successCount, errorCount, totalRows.
               </Text>
             </BlockStack>
           </Card>

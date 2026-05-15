@@ -99,8 +99,17 @@ model NotificationSetting {
   shop             String  @unique
   email            String?
   slackWebhookUrl  String?
+  flowWebhookUrl   String?
   notifyOnComplete Boolean @default(true)
   notifyOnFail     Boolean @default(true)
+}
+
+model ImportWebhookKey {
+  id        String   @id @default(cuid())
+  shop      String   @unique
+  keyHash   String   // SHA-256 of the raw key
+  createdAt DateTime @default(now())
+  lastUsed  DateTime?
 }
 
 model ImportTemplate {

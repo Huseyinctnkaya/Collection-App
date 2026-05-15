@@ -17,6 +17,7 @@ import {
   DataTable,
   Divider,
   Select,
+  TextField,
 } from "@shopify/polaris";
 import { useState, useCallback, useEffect } from "react";
 import { useFetcher } from "@remix-run/react";
@@ -24,6 +25,7 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { parseFile } from "../services/parser.server";
 import { runImport } from "../services/importer.server";
+import { fetchGoogleSheetAsCSV } from "../services/sheets.server";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const BULK_THRESHOLD = 50;
@@ -51,6 +53,28 @@ export async function loader({ request }: LoaderFunctionArgs) {
 export async function action({ request }: ActionFunctionArgs) {
   const { session, admin } = await authenticate.admin(request);
 
+  const contentType = request.headers.get("content-type") ?? "";
+
+  // Google Sheets path — plain form submission, no file upload
+  if (contentType.includes("application/x-www-form-urlencoded")) {
+    const formData = await request.formData();
+    if (formData.get("intent") === "sheets") {
+      const sheetsUrl = (formData.get("sheetsUrl") as string)?.trim();
+      const duplicateStrategy = (formData.get("duplicateStrategy") as string) === "overwrite" ? "overwrite" : "skip";
+      if (!sheetsUrl) return json({ error: "Google Sheets URL is required" }, { status: 400 });
+
+      let buffer: Buffer;
+      try {
+        buffer = await fetchGoogleSheetAsCSV(sheetsUrl);
+      } catch (err) {
+        return json({ error: err instanceof Error ? err.message : "Failed to fetch sheet" }, { status: 422 });
+      }
+
+      return startImportFromBuffer({ buffer, fileName: "google-sheet.csv", ext: "csv", session, admin, duplicateStrategy, isDryRun: false, templateId: null });
+    }
+  }
+
+  // File upload path
   const uploadHandler = unstable_createMemoryUploadHandler({ maxPartSize: MAX_FILE_SIZE });
   const formData = await unstable_parseMultipartFormData(request, uploadHandler);
 
@@ -66,7 +90,28 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
+  return startImportFromBuffer({ buffer, fileName: file.name, ext: ext as "csv" | "xlsx", session, admin, duplicateStrategy, isDryRun, templateId });
+}
 
+async function startImportFromBuffer({
+  buffer,
+  fileName,
+  ext,
+  session,
+  admin,
+  duplicateStrategy,
+  isDryRun,
+  templateId,
+}: {
+  buffer: Buffer;
+  fileName: string;
+  ext: "csv" | "xlsx";
+  session: { shop: string };
+  admin: Parameters<typeof runImport>[0]["admin"];
+  duplicateStrategy: "skip" | "overwrite";
+  isDryRun: boolean;
+  templateId: string | null;
+}) {
   let columnMap: Record<string, string> | undefined;
   if (templateId) {
     const tmpl = await prisma.importTemplate.findFirst({ where: { id: templateId, shop: session.shop } });
@@ -75,7 +120,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
   let parseResult;
   try {
-    parseResult = await parseFile(buffer, ext as "csv" | "xlsx", columnMap);
+    parseResult = await parseFile(buffer, ext, columnMap);
   } catch (err) {
     return json({ error: `Parse error: ${err instanceof Error ? err.message : "Unknown"}` }, { status: 422 });
   }
@@ -83,14 +128,13 @@ export async function action({ request }: ActionFunctionArgs) {
   const job = await prisma.importJob.create({
     data: {
       shop: session.shop,
-      fileName: file.name,
+      fileName,
       fileType: ext,
       status: "PARSING",
       totalRows: parseResult.totalRows,
     },
   });
 
-  // Save parse errors
   const parseErrors = parseResult.rows.filter((r) => r.errors.length > 0);
   if (parseErrors.length > 0) {
     await prisma.importError.createMany({
@@ -107,7 +151,6 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const useBulk = parseResult.validRows > BULK_THRESHOLD;
 
-  // Dry run: return preview without importing
   if (isDryRun) {
     return json({
       dryRun: true,
@@ -125,7 +168,6 @@ export async function action({ request }: ActionFunctionArgs) {
     });
   }
 
-  // Run import in background (fire and forget for long jobs)
   runImport({
     jobId: job.id,
     shop: session.shop,
@@ -134,10 +176,7 @@ export async function action({ request }: ActionFunctionArgs) {
     useBulk,
     duplicateStrategy,
   }).catch(async (err) => {
-    await prisma.importJob.update({
-      where: { id: job.id },
-      data: { status: "FAILED" },
-    });
+    await prisma.importJob.update({ where: { id: job.id }, data: { status: "FAILED" } });
     console.error("Import job failed:", err);
   });
 
@@ -160,6 +199,7 @@ export default function ImportPage() {
   const [file, setFile] = useState<File | null>(null);
   const [duplicateStrategy, setDuplicateStrategy] = useState<"skip" | "overwrite">("skip");
   const [templateId, setTemplateId] = useState("");
+  const [sheetsUrl, setSheetsUrl] = useState("");
   const isSubmitting = navigation.state === "submitting";
 
   const activeJobId =
@@ -360,6 +400,55 @@ export default function ImportPage() {
                   </BlockStack>
                 );
               })()}
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        {/* Google Sheets Import */}
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text variant="headingMd" as="h2">Import from Google Sheets</Text>
+                <Badge tone="info">Public sheet required</Badge>
+              </InlineStack>
+              <Divider />
+              <TextField
+                label="Google Sheets URL"
+                value={sheetsUrl}
+                onChange={setSheetsUrl}
+                placeholder="https://docs.google.com/spreadsheets/d/..."
+                helpText="The sheet must be shared as 'Anyone with the link can view'. The first sheet tab is used by default; append #gid=... to target a specific tab."
+                autoComplete="off"
+              />
+              <Select
+                label="Duplicate strategy"
+                options={[
+                  { label: "Skip existing collections", value: "skip" },
+                  { label: "Overwrite existing collections", value: "overwrite" },
+                ]}
+                value={duplicateStrategy}
+                onChange={(v) => setDuplicateStrategy(v as "skip" | "overwrite")}
+              />
+              <InlineStack gap="200">
+                <Button
+                  variant="primary"
+                  disabled={!sheetsUrl.trim() || isSubmitting}
+                  loading={isSubmitting}
+                  onClick={() => {
+                    const fd = new FormData();
+                    fd.append("intent", "sheets");
+                    fd.append("sheetsUrl", sheetsUrl.trim());
+                    fd.append("duplicateStrategy", duplicateStrategy);
+                    submit(fd, { method: "post" });
+                  }}
+                >
+                  Import from Sheet
+                </Button>
+                {sheetsUrl && (
+                  <Button variant="plain" onClick={() => setSheetsUrl("")}>Clear</Button>
+                )}
+              </InlineStack>
             </BlockStack>
           </Card>
         </Layout.Section>

@@ -32,6 +32,23 @@ async function sendSlack(webhookUrl: string, title: string, body: string) {
   });
 }
 
+async function triggerFlowWebhook(webhookUrl: string, job: JobSummary, shop: string) {
+  await fetch(webhookUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      shop,
+      importId: job.id,
+      fileName: job.fileName,
+      status: job.status,
+      successCount: job.successCount,
+      errorCount: job.errorCount,
+      totalRows: job.totalRows,
+      triggeredAt: new Date().toISOString(),
+    }),
+  });
+}
+
 async function sendEmail(to: string, title: string, body: string) {
   const smtpHost = process.env.SMTP_HOST;
   const smtpPort = Number(process.env.SMTP_PORT ?? 587);
@@ -74,6 +91,10 @@ export async function notifyImportFinished(shop: string, job: JobSummary) {
 
   if (settings.email) {
     tasks.push(sendEmail(settings.email, title, body).catch(console.error));
+  }
+
+  if (settings.flowWebhookUrl) {
+    tasks.push(triggerFlowWebhook(settings.flowWebhookUrl, job, shop).catch(console.error));
   }
 
   await Promise.all(tasks);
