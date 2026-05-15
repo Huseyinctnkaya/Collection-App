@@ -18,6 +18,10 @@ import {
   NotificationIcon,
   ThemeTemplateIcon,
   LanguageTranslateIcon,
+  BookOpenIcon,
+  ChatIcon,
+  QuestionCircleIcon,
+  EmailIcon,
 } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -150,6 +154,64 @@ export default function Index() {
                         borderRadius="200"
                         padding="150"
                       >
+                        <div style={{ width: 20, height: 20, display: "flex" }}>
+                          <Icon source={Src} tone="base" />
+                        </div>
+                      </Box>
+                      <Text as="h3" variant="headingSm">{title}</Text>
+                    </InlineStack>
+                    <Text as="p" variant="bodySm" tone="subdued">{desc}</Text>
+                  </BlockStack>
+                </Card>
+              </div>
+            ))}
+          </div>
+        </BlockStack>
+
+        {/* Support */}
+        <BlockStack gap="300">
+          <Text as="h2" variant="headingMd">Support</Text>
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+            gap: "12px",
+          }}>
+            {[
+              {
+                icon: BookOpenIcon,
+                title: "Documentation",
+                desc: "Learn about CSV format, rules, and all available columns",
+                url: "/app/template",
+                external: true,
+              },
+              {
+                icon: QuestionCircleIcon,
+                title: "FAQ",
+                desc: "Common questions about imports, errors, and bulk operations",
+                url: null,
+              },
+              {
+                icon: ChatIcon,
+                title: "Live Chat",
+                desc: "Chat with our support team directly from the app",
+                url: null,
+              },
+              {
+                icon: EmailIcon,
+                title: "Email Support",
+                desc: "Send us a message and we'll get back to you within 24 hours",
+                url: null,
+              },
+            ].map(({ icon: Src, title, desc, url, external }) => (
+              <div
+                key={title}
+                onClick={url ? () => external ? window.open(url, "_blank") : navigate(url) : undefined}
+                style={{ cursor: url ? "pointer" : "default", display: "grid" }}
+              >
+                <Card>
+                  <BlockStack gap="200">
+                    <InlineStack gap="200" blockAlign="center" wrap={false}>
+                      <Box background="bg-surface-secondary" borderRadius="200" padding="150">
                         <div style={{ width: 20, height: 20, display: "flex" }}>
                           <Icon source={Src} tone="base" />
                         </div>
