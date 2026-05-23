@@ -1,7 +1,8 @@
 import { json, redirect } from "@remix-run/node";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useNavigation } from "@remix-run/react";
+import { useActionData, useLoaderData, useNavigation } from "@remix-run/react";
 import { Form } from "@remix-run/react";
+import { useEffect } from "react";
 import {
   Page,
   Layout,
@@ -149,7 +150,9 @@ export async function action({ request }: ActionFunctionArgs) {
     const confirmationUrl = data?.appSubscriptionCreate?.confirmationUrl;
     if (!confirmationUrl) return json({ error: "Failed to create subscription" }, { status: 500 });
 
-    return redirect(confirmationUrl);
+    // Return the URL to the client — the component uses window.top.location.href
+    // because server-side redirect() can't break out of the Shopify embedded app iframe
+    return json({ confirmationUrl });
   }
 
   if (intent === "cancel") {
@@ -183,8 +186,23 @@ function CheckItem({ text }: { text: string }) {
 
 export default function PlanPage() {
   const { currentPlan, subscriptionId, activated } = useLoaderData<typeof loader>();
+  const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
-  const isBusy = navigation.state !== "idle";
+
+  // Which plan button is currently submitting
+  const submittingPlan = navigation.state !== "idle"
+    ? (navigation.formData?.get("plan") as string | null)
+    : null;
+  const submittingIntent = navigation.state !== "idle"
+    ? (navigation.formData?.get("intent") as string | null)
+    : null;
+
+  // Redirect to Shopify billing confirmation page — must use window.top to break out of iframe
+  useEffect(() => {
+    if (actionData && "confirmationUrl" in actionData) {
+      window.top!.location.href = (actionData as { confirmationUrl: string }).confirmationUrl;
+    }
+  }, [actionData]);
 
   return (
     <Page
@@ -286,14 +304,15 @@ export default function PlanPage() {
                         planKey !== "free" && subscriptionId ? (
                           <Form method="post">
                             <input type="hidden" name="intent" value="cancel" />
+                            <input type="hidden" name="plan" value={planKey} />
                             <input type="hidden" name="subscriptionId" value={subscriptionId} />
                             <Button
                               fullWidth
                               variant="plain"
                               tone="critical"
                               submit
-                              loading={isBusy}
-                              disabled={isBusy}
+                              loading={submittingIntent === "cancel" && submittingPlan === planKey}
+                              disabled={submittingIntent !== null}
                             >
                               Cancel Plan
                             </Button>
@@ -308,10 +327,9 @@ export default function PlanPage() {
                           <Button
                             fullWidth
                             variant="primary"
-                            tone={planKey === "premium" ? undefined : undefined}
                             submit
-                            loading={isBusy}
-                            disabled={isBusy}
+                            loading={submittingIntent === "subscribe" && submittingPlan === planKey}
+                            disabled={submittingIntent !== null}
                           >
                             Upgrade to {planDef.label}
                           </Button>
@@ -323,8 +341,8 @@ export default function PlanPage() {
                           <Button
                             fullWidth
                             submit
-                            loading={isBusy}
-                            disabled={isBusy || planKey === "free"}
+                            loading={submittingIntent === "subscribe" && submittingPlan === planKey}
+                            disabled={submittingIntent !== null || planKey === "free"}
                           >
                             {planKey === "free" ? "Cancel to downgrade" : `Downgrade to ${planDef.label}`}
                           </Button>
