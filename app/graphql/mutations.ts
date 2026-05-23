@@ -206,16 +206,6 @@ export const CURRENT_APP_SUBSCRIPTION = `#graphql
         id
         name
         status
-        lineItems {
-          plan {
-            pricingDetails {
-              ... on AppRecurringPricing {
-                price { amount currencyCode }
-                interval
-              }
-            }
-          }
-        }
       }
     }
   }

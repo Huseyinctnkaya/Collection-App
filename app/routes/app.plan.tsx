@@ -18,7 +18,7 @@ import {
 import { CheckIcon } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
-import { PLANS, syncAndGetPlan, type PlanName } from "../services/plan.server";
+import { PLANS, type PlanName } from "../services/plan.server";
 import { APP_SUBSCRIPTION_CREATE, APP_SUBSCRIPTION_CANCEL, CURRENT_APP_SUBSCRIPTION } from "../graphql/mutations";
 
 const PLAN_ORDER: PlanName[] = ["free", "pro", "premium"];
@@ -69,19 +69,43 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
   const activated = url.searchParams.get("activated");
 
-  // Always sync from Shopify on plan page visit
-  const currentPlan = await syncAndGetPlan(admin, session.shop);
+  // Single Shopify API call — fetch subscriptions and derive plan
+  let currentPlan: PlanName = "free";
+  let subscriptionId: string | null = null;
 
-  // Get active subscription ID for cancel
-  const subRes = await admin.graphql(CURRENT_APP_SUBSCRIPTION);
-  const { data } = await subRes.json();
-  const activeSub = (data?.currentAppInstallation?.activeSubscriptions ?? []).find(
-    (s: { status: string }) => s.status === "ACTIVE"
-  );
+  try {
+    const subRes = await admin.graphql(CURRENT_APP_SUBSCRIPTION);
+    const { data } = await subRes.json();
+    const subs: Array<{ id: string; name: string; status: string }> =
+      data?.currentAppInstallation?.activeSubscriptions ?? [];
+
+    const activeSub = subs.find((s) => s.status === "ACTIVE");
+    subscriptionId = activeSub?.id ?? null;
+
+    if (activeSub) {
+      const lower = activeSub.name.toLowerCase();
+      currentPlan = lower.includes("premium") ? "premium" : lower.includes("pro") ? "pro" : "free";
+    }
+
+    // Sync cache
+    await import("../db.server").then(({ default: prisma }) =>
+      prisma.shopPlan.upsert({
+        where: { shop: session.shop },
+        create: { shop: session.shop, plan: currentPlan, subscriptionId },
+        update: { plan: currentPlan, subscriptionId },
+      })
+    );
+  } catch (err) {
+    console.error("Failed to fetch subscription from Shopify:", err);
+    // Fall back to cached value
+    currentPlan = await import("../services/plan.server").then((m) =>
+      m.getCachedPlan(session.shop)
+    );
+  }
 
   return json({
     currentPlan,
-    subscriptionId: activeSub?.id ?? null,
+    subscriptionId,
     activated: activated === "true",
     shop: session.shop,
   });
@@ -132,7 +156,13 @@ export async function action({ request }: ActionFunctionArgs) {
     if (!subscriptionId) return json({ error: "No active subscription" }, { status: 400 });
 
     await admin.graphql(APP_SUBSCRIPTION_CANCEL, { variables: { id: subscriptionId } });
-    await syncAndGetPlan(admin, session.shop);
+    // Clear the cached plan back to free
+    const prisma = (await import("../db.server")).default;
+    await prisma.shopPlan.upsert({
+      where: { shop: session.shop },
+      create: { shop: session.shop, plan: "free", subscriptionId: null },
+      update: { plan: "free", subscriptionId: null },
+    });
     return redirect("/app/plan");
   }
 
