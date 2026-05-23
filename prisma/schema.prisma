@@ -104,6 +104,14 @@ model NotificationSetting {
   notifyOnFail     Boolean @default(true)
 }
 
+model ShopPlan {
+  id             String   @id @default(cuid())
+  shop           String   @unique
+  plan           String   @default("free") // free | pro | premium
+  subscriptionId String?
+  updatedAt      DateTime @updatedAt
+}
+
 model ImportWebhookKey {
   id        String   @id @default(cuid())
   shop      String   @unique

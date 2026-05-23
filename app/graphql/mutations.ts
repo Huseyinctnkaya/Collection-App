@@ -180,6 +180,47 @@ export const TRANSLATABLE_RESOURCE = `#graphql
   }
 `;
 
+export const APP_SUBSCRIPTION_CREATE = `#graphql
+  mutation appSubscriptionCreate($name: String!, $returnUrl: URL!, $lineItems: [AppSubscriptionLineItemInput!]!, $test: Boolean) {
+    appSubscriptionCreate(name: $name, returnUrl: $returnUrl, lineItems: $lineItems, test: $test) {
+      appSubscription { id status }
+      confirmationUrl
+      userErrors { field message }
+    }
+  }
+`;
+
+export const APP_SUBSCRIPTION_CANCEL = `#graphql
+  mutation appSubscriptionCancel($id: ID!) {
+    appSubscriptionCancel(id: $id) {
+      appSubscription { id status }
+      userErrors { field message }
+    }
+  }
+`;
+
+export const CURRENT_APP_SUBSCRIPTION = `#graphql
+  query currentAppSubscription {
+    currentAppInstallation {
+      activeSubscriptions {
+        id
+        name
+        status
+        lineItems {
+          plan {
+            pricingDetails {
+              ... on AppRecurringPricing {
+                price { amount currencyCode }
+                interval
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
 export const TRANSLATIONS_REGISTER = `#graphql
   mutation translationsRegister($resourceId: ID!, $translations: [TranslationInput!]!) {
     translationsRegister(resourceId: $resourceId, translations: $translations) {

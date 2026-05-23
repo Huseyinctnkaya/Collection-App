@@ -30,6 +30,7 @@ export default function App() {
         <Link to="/app/collections">Collection Manager</Link>
         <Link to="/app/create-collection">Create Collection</Link>
         <Link to="/app/health">Health Checker</Link>
+        <Link to="/app/plan">Plan &amp; Billing</Link>
         <Link to="/app/integrations">Integrations</Link>
         <Link to="/app/notifications">Notifications</Link>
         <Link to="/app/templates">Templates</Link>

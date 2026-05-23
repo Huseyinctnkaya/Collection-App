@@ -26,6 +26,7 @@ import prisma from "../db.server";
 import { parseFile } from "../services/parser.server";
 import { runImport } from "../services/importer.server";
 import { fetchGoogleSheetAsCSV } from "../services/sheets.server";
+import { getCachedPlan, getLimits, getMonthlyImportCount } from "../services/plan.server";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const BULK_THRESHOLD = 50;
@@ -33,7 +34,7 @@ const BULK_THRESHOLD = 50;
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
 
-  const [recentJobs, templates] = await Promise.all([
+  const [recentJobs, templates, currentPlan, monthlyImportCount] = await Promise.all([
     prisma.importJob.findMany({
       where: { shop: session.shop },
       orderBy: { createdAt: "desc" },
@@ -45,13 +46,30 @@ export async function loader({ request }: LoaderFunctionArgs) {
       orderBy: { createdAt: "desc" },
       select: { id: true, name: true, columnMap: true },
     }),
+    getCachedPlan(session.shop),
+    getMonthlyImportCount(session.shop),
   ]);
 
-  return json({ recentJobs, templates });
+  const limits = getLimits(currentPlan);
+  return json({ recentJobs, templates, currentPlan, limits, monthlyImportCount });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
   const { session, admin } = await authenticate.admin(request);
+
+  const plan = await getCachedPlan(session.shop);
+  const limits = getLimits(plan);
+
+  // Monthly import quota check (skip for dry runs)
+  if (limits.maxImportsPerMonth !== -1) {
+    const count = await getMonthlyImportCount(session.shop);
+    if (count >= limits.maxImportsPerMonth) {
+      return json({
+        error: `You've reached your monthly import limit (${limits.maxImportsPerMonth} imports). Upgrade your plan to import more.`,
+        planError: true,
+      }, { status: 403 });
+    }
+  }
 
   const contentType = request.headers.get("content-type") ?? "";
 
@@ -59,6 +77,10 @@ export async function action({ request }: ActionFunctionArgs) {
   if (contentType.includes("application/x-www-form-urlencoded")) {
     const formData = await request.formData();
     if (formData.get("intent") === "sheets") {
+      if (!limits.googleSheetsEnabled) {
+        return json({ error: "Google Sheets import is not available on the Free plan. Upgrade to Pro or Premium.", planError: true }, { status: 403 });
+      }
+
       const sheetsUrl = (formData.get("sheetsUrl") as string)?.trim();
       const duplicateStrategy = (formData.get("duplicateStrategy") as string) === "overwrite" ? "overwrite" : "skip";
       if (!sheetsUrl) return json({ error: "Google Sheets URL is required" }, { status: 400 });
@@ -70,7 +92,7 @@ export async function action({ request }: ActionFunctionArgs) {
         return json({ error: err instanceof Error ? err.message : "Failed to fetch sheet" }, { status: 422 });
       }
 
-      return startImportFromBuffer({ buffer, fileName: "google-sheet.csv", ext: "csv", session, admin, duplicateStrategy, isDryRun: false, templateId: null });
+      return startImportFromBuffer({ buffer, fileName: "google-sheet.csv", ext: "csv", session, admin, duplicateStrategy, isDryRun: false, templateId: null, limits });
     }
   }
 
@@ -89,8 +111,12 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ error: "Only CSV and XLSX files are supported" }, { status: 400 });
   }
 
+  if (ext === "xlsx" && !limits.allowedFileTypes.includes("xlsx")) {
+    return json({ error: "Excel (.xlsx) files are not available on the Free plan. Upgrade to Pro or Premium.", planError: true }, { status: 403 });
+  }
+
   const buffer = Buffer.from(await file.arrayBuffer());
-  return startImportFromBuffer({ buffer, fileName: file.name, ext: ext as "csv" | "xlsx", session, admin, duplicateStrategy, isDryRun, templateId });
+  return startImportFromBuffer({ buffer, fileName: file.name, ext: ext as "csv" | "xlsx", session, admin, duplicateStrategy, isDryRun, templateId, limits });
 }
 
 async function startImportFromBuffer({
@@ -102,6 +128,7 @@ async function startImportFromBuffer({
   duplicateStrategy,
   isDryRun,
   templateId,
+  limits,
 }: {
   buffer: Buffer;
   fileName: string;
@@ -111,6 +138,7 @@ async function startImportFromBuffer({
   duplicateStrategy: "skip" | "overwrite";
   isDryRun: boolean;
   templateId: string | null;
+  limits: import("../services/plan.server").PlanLimits;
 }) {
   let columnMap: Record<string, string> | undefined;
   if (templateId) {
@@ -123,6 +151,14 @@ async function startImportFromBuffer({
     parseResult = await parseFile(buffer, ext, columnMap);
   } catch (err) {
     return json({ error: `Parse error: ${err instanceof Error ? err.message : "Unknown"}` }, { status: 422 });
+  }
+
+  // Row limit check
+  if (limits.maxRowsPerImport !== -1 && parseResult.totalRows > limits.maxRowsPerImport) {
+    return json({
+      error: `Your file has ${parseResult.totalRows} rows but your plan allows ${limits.maxRowsPerImport} rows per import. Upgrade to import more.`,
+      planError: true,
+    }, { status: 403 });
   }
 
   const job = await prisma.importJob.create({
@@ -195,7 +231,7 @@ async function startImportFromBuffer({
 }
 
 export default function ImportPage() {
-  const { recentJobs, templates } = useLoaderData<typeof loader>();
+  const { recentJobs, templates, currentPlan, limits, monthlyImportCount } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const submit = useSubmit();
@@ -263,6 +299,41 @@ export default function ImportPage() {
       ]}
     >
       <Layout>
+        {/* Plan quota banner */}
+        <Layout.Section>
+          <InlineStack align="space-between" blockAlign="center">
+            <InlineStack gap="300" blockAlign="center">
+              <Badge tone={currentPlan === "free" ? "new" : currentPlan === "pro" ? "info" : "success"}>
+                {`${currentPlan.charAt(0).toUpperCase()}${currentPlan.slice(1)} Plan`}
+              </Badge>
+              {limits.maxImportsPerMonth !== -1 && (
+                <Text as="span" tone="subdued" variant="bodySm">
+                  {monthlyImportCount} / {limits.maxImportsPerMonth} imports this month
+                </Text>
+              )}
+              {limits.maxRowsPerImport !== -1 && (
+                <Text as="span" tone="subdued" variant="bodySm">
+                  Max {limits.maxRowsPerImport} rows per import
+                </Text>
+              )}
+            </InlineStack>
+            {currentPlan !== "premium" && (
+              <Button variant="plain" url="/app/plan" size="slim">Upgrade Plan →</Button>
+            )}
+          </InlineStack>
+        </Layout.Section>
+
+        {actionData && "planError" in actionData && (
+          <Layout.Section>
+            <Banner tone="warning" title="Plan limit reached">
+              <InlineStack gap="300" blockAlign="center">
+                <Text as="span">{(actionData as { error: string }).error}</Text>
+                <Button variant="primary" url="/app/plan" size="slim">View Plans</Button>
+              </InlineStack>
+            </Banner>
+          </Layout.Section>
+        )}
+
         <Layout.Section>
           <Card>
             <BlockStack gap="400">
