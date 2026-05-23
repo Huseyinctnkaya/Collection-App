@@ -26,14 +26,14 @@ const PLAN_ORDER: PlanName[] = ["free", "pro", "premium"];
 const PLAN_FEATURES: Record<PlanName, string[]> = {
   free: [
     "Up to 100 rows per import",
-    "5 imports per month",
+    "2 imports per month",
     "CSV files only",
     "Basic import history",
     "Community support",
   ],
   pro: [
     "Up to 2,000 rows per import",
-    "Unlimited imports",
+    "50 imports per month",
     "CSV + Excel files",
     "Google Sheets import",
     "5 scheduled imports",
@@ -367,7 +367,7 @@ export default function PlanPage() {
                   <tbody>
                     {[
                       { label: "Rows per import", values: ["100", "2,000", "Unlimited"] },
-                      { label: "Imports per month", values: ["5", "Unlimited", "Unlimited"] },
+                      { label: "Imports per month", values: ["2", "50", "Unlimited"] },
                       { label: "Excel (.xlsx) support", values: ["—", "✓", "✓"] },
                       { label: "Google Sheets import", values: ["—", "✓", "✓"] },
                       { label: "Scheduled imports", values: ["—", "5", "Unlimited"] },

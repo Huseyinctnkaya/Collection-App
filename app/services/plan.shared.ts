@@ -21,7 +21,7 @@ export const PLANS: Record<PlanName, { label: string; price: number; limits: Pla
     price: 0,
     limits: {
       maxRowsPerImport: 100,
-      maxImportsPerMonth: 5,
+      maxImportsPerMonth: 2,
       maxScheduledImports: 0,
       allowedFileTypes: ["csv"],
       googleSheetsEnabled: false,
@@ -37,7 +37,7 @@ export const PLANS: Record<PlanName, { label: string; price: number; limits: Pla
     price: 9.99,
     limits: {
       maxRowsPerImport: 2000,
-      maxImportsPerMonth: -1,
+      maxImportsPerMonth: 50,
       maxScheduledImports: 5,
       allowedFileTypes: ["csv", "xlsx"],
       googleSheetsEnabled: true,
