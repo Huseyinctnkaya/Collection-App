@@ -18,7 +18,9 @@ import {
 import { TitleBar } from "@shopify/app-bridge-react";
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import { authenticate } from "../shopify.server";
+import { PlanGate } from "../components/PlanGate";
 import { COLLECTIONS_LIST } from "../graphql/mutations";
+import { getCachedPlan } from "../services/plan.server";
 
 interface CollectionNode {
   id: string;
@@ -96,7 +98,14 @@ async function fetchAllCollections(admin: AdminApiContext): Promise<CollectionNo
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
+  const currentPlan = await getCachedPlan(session.shop);
+
+  // Return early for free plan — don't fetch all collections unnecessarily
+  if (currentPlan === "free") {
+    return json({ currentPlan, results: [], totalScore: 0, totalCollections: 0, criticalCount: 0, warningCount: 0, healthyCount: 0, issueSummary: { empty: 0, no_image: 0, no_seo: 0, no_seo_description: 0 } });
+  }
+
   const collections = await fetchAllCollections(admin);
   const results = collections.map(analyzeCollection);
 
@@ -116,6 +125,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   };
 
   return json({
+    currentPlan,
     results: results.sort((a, b) => a.score - b.score),
     totalScore,
     totalCollections: collections.length,
@@ -144,10 +154,10 @@ function ScoreBadge({ score }: { score: number }) {
 }
 
 export default function HealthPage() {
-  const { results, totalScore, totalCollections, criticalCount, warningCount, healthyCount, issueSummary } =
+  const { currentPlan, results, totalScore, totalCollections, criticalCount, warningCount, healthyCount, issueSummary } =
     useLoaderData<typeof loader>();
 
-  const rows = results.map((r) => [
+  const rows = results.filter((r): r is NonNullable<typeof r> => r !== null).map((r) => [
     <InlineStack key={r.collection.id} gap="200" blockAlign="center">
       <Thumbnail
         source={r.collection.image?.src ?? ""}
@@ -183,108 +193,109 @@ export default function HealthPage() {
       <TitleBar title="Collection Health" />
       <Layout>
         <Layout.Section>
-          {criticalCount > 0 && (
-            <Banner tone="critical" title={`${criticalCount} collection(s) need immediate attention`}>
-              <Text as="p">These collections have no products and no smart rules — they appear empty to shoppers.</Text>
-            </Banner>
-          )}
-        </Layout.Section>
+          <PlanGate
+            currentPlan={currentPlan}
+            requiredPlan="pro"
+            featureName="Collection Health Checker"
+            description="Scan all your collections for missing images, SEO issues, and empty collections. Available on Pro and Premium plans."
+          >
+            <BlockStack gap="500">
+              {criticalCount > 0 && (
+                <Banner tone="critical" title={`${criticalCount} collection(s) need immediate attention`}>
+                  <Text as="p">These collections have no products and no smart rules — they appear empty to shoppers.</Text>
+                </Banner>
+              )}
 
-        {/* Overall score */}
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
-              <InlineStack align="space-between" blockAlign="center">
-                <BlockStack gap="100">
-                  <Text as="h2" variant="headingMd">Overall Health Score</Text>
-                  <Text as="p" tone="subdued">{totalCollections} collections scanned</Text>
-                </BlockStack>
-                <Text as="p" variant="heading2xl" fontWeight="bold">{totalScore}<Text as="span" tone="subdued" variant="bodyMd">/100</Text></Text>
-              </InlineStack>
-              <ProgressBar progress={totalScore} tone={scoreBarTone(totalScore)} size="large" />
-            </BlockStack>
-          </Card>
-        </Layout.Section>
-
-        {/* Stat cards */}
-        <Layout.Section>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px" }}>
-            <div style={{ display: "grid" }}>
+              {/* Overall score */}
               <Card>
-                <BlockStack gap="200">
-                  <Text as="p" tone="subdued" variant="bodyMd">Healthy</Text>
-                  <Text as="p" variant="headingXl" fontWeight="bold">{healthyCount}</Text>
-                  <Badge tone="success">No issues</Badge>
-                </BlockStack>
-              </Card>
-            </div>
-            <div style={{ display: "grid" }}>
-              <Card>
-                <BlockStack gap="200">
-                  <Text as="p" tone="subdued" variant="bodyMd">Warnings</Text>
-                  <Text as="p" variant="headingXl" fontWeight="bold">{warningCount}</Text>
-                  <Badge tone="warning">Needs attention</Badge>
-                </BlockStack>
-              </Card>
-            </div>
-            <div style={{ display: "grid" }}>
-              <Card>
-                <BlockStack gap="200">
-                  <Text as="p" tone="subdued" variant="bodyMd">Critical</Text>
-                  <Text as="p" variant="headingXl" fontWeight="bold">{criticalCount}</Text>
-                  <Badge tone="critical">Action required</Badge>
-                </BlockStack>
-              </Card>
-            </div>
-          </div>
-        </Layout.Section>
-
-        {/* Issue breakdown */}
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">Issue Breakdown</Text>
-              <Divider />
-              <BlockStack gap="300">
-                {[
-                  { label: "Empty collections (no products, no rules)", count: issueSummary.empty, severity: "critical" as const },
-                  { label: "Missing collection image", count: issueSummary.no_image, severity: "warning" as const },
-                  { label: "Missing SEO title", count: issueSummary.no_seo, severity: "warning" as const },
-                  { label: "Missing SEO description", count: issueSummary.no_seo_description, severity: "info" as const },
-                ].map(({ label, count, severity }) => (
-                  <InlineStack key={label} align="space-between" blockAlign="center">
-                    <InlineStack gap="200" blockAlign="center">
-                      <Badge tone={severity === "critical" ? "critical" : severity === "warning" ? "warning" : "info"}>
-                        {count.toString()}
-                      </Badge>
-                      <Text as="span">{label}</Text>
-                    </InlineStack>
-                    {totalCollections > 0 && (
-                      <Text as="span" tone="subdued">
-                        {Math.round((count / totalCollections) * 100)}%
-                      </Text>
-                    )}
+                <BlockStack gap="400">
+                  <InlineStack align="space-between" blockAlign="center">
+                    <BlockStack gap="100">
+                      <Text as="h2" variant="headingMd">Overall Health Score</Text>
+                      <Text as="p" tone="subdued">{totalCollections} collections scanned</Text>
+                    </BlockStack>
+                    <Text as="p" variant="heading2xl" fontWeight="bold">{totalScore}<Text as="span" tone="subdued" variant="bodyMd">/100</Text></Text>
                   </InlineStack>
-                ))}
-              </BlockStack>
-            </BlockStack>
-          </Card>
-        </Layout.Section>
+                  <ProgressBar progress={totalScore} tone={scoreBarTone(totalScore)} size="large" />
+                </BlockStack>
+              </Card>
 
-        {/* Per-collection table */}
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">Collection Details</Text>
-              <Text as="p" tone="subdued">Sorted by health score — worst first</Text>
-              <DataTable
-                columnContentTypes={["text", "text", "text", "text"]}
-                headings={["Collection", "Handle", "Score", "Issues"]}
-                rows={rows}
-                hoverable
-              />
+              {/* Stat cards */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px" }}>
+                <div style={{ display: "grid" }}>
+                  <Card>
+                    <BlockStack gap="200">
+                      <Text as="p" tone="subdued" variant="bodyMd">Healthy</Text>
+                      <Text as="p" variant="headingXl" fontWeight="bold">{healthyCount}</Text>
+                      <Badge tone="success">No issues</Badge>
+                    </BlockStack>
+                  </Card>
+                </div>
+                <div style={{ display: "grid" }}>
+                  <Card>
+                    <BlockStack gap="200">
+                      <Text as="p" tone="subdued" variant="bodyMd">Warnings</Text>
+                      <Text as="p" variant="headingXl" fontWeight="bold">{warningCount}</Text>
+                      <Badge tone="warning">Needs attention</Badge>
+                    </BlockStack>
+                  </Card>
+                </div>
+                <div style={{ display: "grid" }}>
+                  <Card>
+                    <BlockStack gap="200">
+                      <Text as="p" tone="subdued" variant="bodyMd">Critical</Text>
+                      <Text as="p" variant="headingXl" fontWeight="bold">{criticalCount}</Text>
+                      <Badge tone="critical">Action required</Badge>
+                    </BlockStack>
+                  </Card>
+                </div>
+              </div>
+
+              {/* Issue breakdown */}
+              <Card>
+                <BlockStack gap="400">
+                  <Text as="h2" variant="headingMd">Issue Breakdown</Text>
+                  <Divider />
+                  <BlockStack gap="300">
+                    {[
+                      { label: "Empty collections (no products, no rules)", count: issueSummary.empty, severity: "critical" as const },
+                      { label: "Missing collection image", count: issueSummary.no_image, severity: "warning" as const },
+                      { label: "Missing SEO title", count: issueSummary.no_seo, severity: "warning" as const },
+                      { label: "Missing SEO description", count: issueSummary.no_seo_description, severity: "info" as const },
+                    ].map(({ label, count, severity }) => (
+                      <InlineStack key={label} align="space-between" blockAlign="center">
+                        <InlineStack gap="200" blockAlign="center">
+                          <Badge tone={severity === "critical" ? "critical" : severity === "warning" ? "warning" : "info"}>
+                            {count.toString()}
+                          </Badge>
+                          <Text as="span">{label}</Text>
+                        </InlineStack>
+                        {totalCollections > 0 && (
+                          <Text as="span" tone="subdued">
+                            {Math.round((count / totalCollections) * 100)}%
+                          </Text>
+                        )}
+                      </InlineStack>
+                    ))}
+                  </BlockStack>
+                </BlockStack>
+              </Card>
+
+              {/* Per-collection table */}
+              <Card>
+                <BlockStack gap="400">
+                  <Text as="h2" variant="headingMd">Collection Details</Text>
+                  <Text as="p" tone="subdued">Sorted by health score — worst first</Text>
+                  <DataTable
+                    columnContentTypes={["text", "text", "text", "text"]}
+                    headings={["Collection", "Handle", "Score", "Issues"]}
+                    rows={rows}
+                    hoverable
+                  />
+                </BlockStack>
+              </Card>
             </BlockStack>
-          </Card>
+          </PlanGate>
         </Layout.Section>
       </Layout>
     </Page>

@@ -18,15 +18,21 @@ import {
 import { TitleBar } from "@shopify/app-bridge-react";
 import crypto from "node:crypto";
 import { authenticate } from "../shopify.server";
+import { PlanGate } from "../components/PlanGate";
 import prisma from "../db.server";
+import { getCachedPlan } from "../services/plan.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
-  const record = await prisma.importWebhookKey.findUnique({ where: { shop: session.shop } });
+  const [record, currentPlan] = await Promise.all([
+    prisma.importWebhookKey.findUnique({ where: { shop: session.shop } }),
+    getCachedPlan(session.shop),
+  ]);
   return json({
     hasKey: !!record,
     lastUsed: record?.lastUsed?.toISOString() ?? null,
     createdAt: record?.createdAt?.toISOString() ?? null,
+    currentPlan,
   });
 }
 
@@ -57,7 +63,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function IntegrationsPage() {
-  const { hasKey, lastUsed, createdAt } = useLoaderData<typeof loader>();
+  const { hasKey, lastUsed, createdAt, currentPlan } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const isBusy = navigation.state === "submitting";
@@ -77,6 +83,12 @@ export default function IntegrationsPage() {
       <Layout>
         {/* External Webhook Trigger */}
         <Layout.Section>
+          <PlanGate
+            currentPlan={currentPlan}
+            requiredPlan="premium"
+            featureName="External Webhook Trigger"
+            description="Allow any external system (Zapier, Make, CI/CD) to start an import via API. Available on the Premium plan only."
+          >
           <Card>
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
@@ -149,6 +161,7 @@ export default function IntegrationsPage() {
               </InlineStack>
             </BlockStack>
           </Card>
+          </PlanGate>
         </Layout.Section>
 
         {/* API reference */}

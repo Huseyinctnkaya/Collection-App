@@ -20,20 +20,25 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { rollbackJob } from "../services/rollback.server";
+import { getCachedPlan } from "../services/plan.server";
+import { hasAccess } from "../components/PlanGate";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
 
-  const job = await prisma.importJob.findFirst({
-    where: { id: params.id, shop: session.shop },
-    include: {
-      errors: { orderBy: { row: "asc" } },
-      actions: { select: { id: true, action: true, collectionHandle: true } },
-    },
-  });
+  const [job, currentPlan] = await Promise.all([
+    prisma.importJob.findFirst({
+      where: { id: params.id, shop: session.shop },
+      include: {
+        errors: { orderBy: { row: "asc" } },
+        actions: { select: { id: true, action: true, collectionHandle: true } },
+      },
+    }),
+    getCachedPlan(session.shop),
+  ]);
 
   if (!job) throw new Response("Not Found", { status: 404 });
-  return json({ job });
+  return json({ job, currentPlan });
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
@@ -42,6 +47,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const intent = formData.get("intent");
 
   if (intent === "rollback") {
+    const plan = await getCachedPlan(session.shop);
+    if (!hasAccess(plan, "pro")) {
+      return json({ error: "Rollback is available on Pro and Premium plans" }, { status: 403 });
+    }
     try {
       const result = await rollbackJob(admin, params.id!, session.shop);
       return json({ rollback: result });
@@ -63,7 +72,7 @@ const STATUS_TONE: Record<string, "success" | "warning" | "critical" | "info"> =
 };
 
 export default function JobDetail() {
-  const { job } = useLoaderData<typeof loader>();
+  const { job, currentPlan } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -71,7 +80,7 @@ export default function JobDetail() {
   const isRollingBack = navigation.state === "submitting";
   const progress = job.totalRows > 0 ? Math.round((job.processedRows / job.totalRows) * 100) : 0;
   const isDone = ["COMPLETED", "FAILED", "PARTIAL"].includes(job.status);
-  const canRollback = isDone && !job.rolledBack && job.actions.length > 0 && job.status !== "FAILED";
+  const canRollback = isDone && !job.rolledBack && job.actions.length > 0 && job.status !== "FAILED" && hasAccess(currentPlan, "pro");
   const createdCount = job.actions.filter((a) => a.action === "created").length;
   const updatedCount = job.actions.filter((a) => a.action === "updated").length;
 

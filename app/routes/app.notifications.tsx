@@ -19,14 +19,17 @@ import {
 import { TitleBar } from "@shopify/app-bridge-react";
 import { useState, useCallback } from "react";
 import { authenticate } from "../shopify.server";
+import { PlanGate } from "../components/PlanGate";
 import prisma from "../db.server";
+import { getCachedPlan } from "../services/plan.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
-  const settings = await prisma.notificationSetting.findUnique({
-    where: { shop: session.shop },
-  });
-  return json({ settings });
+  const [settings, currentPlan] = await Promise.all([
+    prisma.notificationSetting.findUnique({ where: { shop: session.shop } }),
+    getCachedPlan(session.shop),
+  ]);
+  return json({ settings, currentPlan });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -61,7 +64,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function NotificationsPage() {
-  const { settings } = useLoaderData<typeof loader>();
+  const { settings, currentPlan } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const isSaving = navigation.state === "submitting";
@@ -136,24 +139,31 @@ export default function NotificationsPage() {
                 </BlockStack>
               </Card>
 
-              <Card>
-                <BlockStack gap="400">
-                  <InlineStack align="space-between" blockAlign="center">
-                    <Text as="h2" variant="headingMd">Shopify Flow / Automation Webhook</Text>
-                    <Badge tone="info">POST on finish</Badge>
-                  </InlineStack>
-                  <Divider />
-                  <TextField
-                    label="Webhook URL"
-                    name="flowWebhookUrl"
-                    value={flowWebhookUrl}
-                    onChange={setFlowWebhookUrl}
-                    placeholder="https://your-flow-endpoint.com/webhook"
-                    helpText="A POST request with import summary JSON will be sent here when an import finishes. Works with Shopify Flow 'Receive webhook', Make, Zapier, or any HTTP trigger."
-                    autoComplete="off"
-                  />
-                </BlockStack>
-              </Card>
+              <PlanGate
+                currentPlan={currentPlan}
+                requiredPlan="pro"
+                featureName="Flow / Automation Webhook"
+                description="Send a POST request to any automation platform when an import finishes. Available on Pro and Premium plans."
+              >
+                <Card>
+                  <BlockStack gap="400">
+                    <InlineStack align="space-between" blockAlign="center">
+                      <Text as="h2" variant="headingMd">Shopify Flow / Automation Webhook</Text>
+                      <Badge tone="info">POST on finish</Badge>
+                    </InlineStack>
+                    <Divider />
+                    <TextField
+                      label="Webhook URL"
+                      name="flowWebhookUrl"
+                      value={flowWebhookUrl}
+                      onChange={setFlowWebhookUrl}
+                      placeholder="https://your-flow-endpoint.com/webhook"
+                      helpText="A POST request with import summary JSON will be sent here when an import finishes. Works with Shopify Flow 'Receive webhook', Make, Zapier, or any HTTP trigger."
+                      autoComplete="off"
+                    />
+                  </BlockStack>
+                </Card>
+              </PlanGate>
 
               <Card>
                 <BlockStack gap="400">

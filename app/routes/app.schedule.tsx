@@ -19,20 +19,26 @@ import {
 import { TitleBar } from "@shopify/app-bridge-react";
 import { useState, useCallback } from "react";
 import { authenticate } from "../shopify.server";
+import { PlanGate } from "../components/PlanGate";
 import prisma from "../db.server";
+import { getCachedPlan, getLimits } from "../services/plan.server";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
 
-  const scheduled = await prisma.scheduledImport.findMany({
-    where: { shop: session.shop },
-    orderBy: { scheduledAt: "asc" },
-    take: 20,
-  });
+  const [scheduled, currentPlan] = await Promise.all([
+    prisma.scheduledImport.findMany({
+      where: { shop: session.shop },
+      orderBy: { scheduledAt: "asc" },
+      take: 20,
+    }),
+    getCachedPlan(session.shop),
+  ]);
 
-  return json({ scheduled });
+  const limits = getLimits(currentPlan);
+  return json({ scheduled, currentPlan, limits });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -90,7 +96,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function SchedulePage() {
-  const { scheduled } = useLoaderData<typeof loader>();
+  const { scheduled, currentPlan, limits } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const submit = useSubmit();
@@ -135,108 +141,120 @@ export default function SchedulePage() {
       <TitleBar title="Schedule Import" />
       <Layout>
         <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">New Scheduled Import</Text>
-              <Divider />
+          <PlanGate
+            currentPlan={currentPlan}
+            requiredPlan="pro"
+            featureName="Scheduled Imports"
+            description="Automate your imports by scheduling them in advance. Available on Pro and Premium plans."
+          >
+            <BlockStack gap="500">
+              <Card>
+                <BlockStack gap="400">
+                  <InlineStack align="space-between" blockAlign="center">
+                    <Text as="h2" variant="headingMd">New Scheduled Import</Text>
+                    {limits.maxScheduledImports !== -1 && (
+                      <Badge tone="info">{`${scheduled.filter(s => s.status === "PENDING").length} / ${limits.maxScheduledImports} active`}</Badge>
+                    )}
+                  </InlineStack>
+                  <Divider />
 
-              <DropZone accept=".csv,.xlsx" type="file" allowMultiple={false} onDrop={handleDrop}>
-                {file
-                  ? <DropZone.FileUpload actionTitle={file.name} actionHint="File ready" />
-                  : <DropZone.FileUpload actionTitle="Add CSV or XLSX" actionHint="or drag and drop" />}
-              </DropZone>
+                  <DropZone accept=".csv,.xlsx" type="file" allowMultiple={false} onDrop={handleDrop}>
+                    {file
+                      ? <DropZone.FileUpload actionTitle={file.name} actionHint="File ready" />
+                      : <DropZone.FileUpload actionTitle="Add CSV or XLSX" actionHint="or drag and drop" />}
+                  </DropZone>
 
-              <BlockStack gap="200">
-                <Text as="p" variant="bodyMd" fontWeight="medium">
-                  Run at (your local time)
-                </Text>
-                <input
-                  type="datetime-local"
-                  value={scheduledAt}
-                  onChange={(e) => setScheduledAt(e.target.value)}
-                  style={{
-                    padding: "8px 12px",
-                    border: "1px solid #c9cccf",
-                    borderRadius: 8,
-                    fontSize: 14,
-                    width: "100%",
-                    maxWidth: 320,
-                  }}
-                />
-              </BlockStack>
+                  <BlockStack gap="200">
+                    <Text as="p" variant="bodyMd" fontWeight="medium">
+                      Run at (your local time)
+                    </Text>
+                    <input
+                      type="datetime-local"
+                      value={scheduledAt}
+                      onChange={(e) => setScheduledAt(e.target.value)}
+                      style={{
+                        padding: "8px 12px",
+                        border: "1px solid #c9cccf",
+                        borderRadius: 8,
+                        fontSize: 14,
+                        width: "100%",
+                        maxWidth: 320,
+                      }}
+                    />
+                  </BlockStack>
 
-              <Select
-                label="If collection already exists"
-                options={[
-                  { label: "Skip (keep existing)", value: "skip" },
-                  { label: "Overwrite (update existing)", value: "overwrite" },
-                ]}
-                value={duplicateStrategy}
-                onChange={(v) => setDuplicateStrategy(v as "skip" | "overwrite")}
-              />
+                  <Select
+                    label="If collection already exists"
+                    options={[
+                      { label: "Skip (keep existing)", value: "skip" },
+                      { label: "Overwrite (update existing)", value: "overwrite" },
+                    ]}
+                    value={duplicateStrategy}
+                    onChange={(v) => setDuplicateStrategy(v as "skip" | "overwrite")}
+                  />
 
-              <Select
-                label="Repeat"
-                options={[
-                  { label: "No repeat (one-time)", value: "none" },
-                  { label: "Daily", value: "daily" },
-                  { label: "Weekly", value: "weekly" },
-                  { label: "Monthly", value: "monthly" },
-                ]}
-                value={recurrence}
-                onChange={setRecurrence}
-                helpText="Recurring imports re-run automatically using the same file"
-              />
+                  <Select
+                    label="Repeat"
+                    options={[
+                      { label: "No repeat (one-time)", value: "none" },
+                      { label: "Daily", value: "daily" },
+                      { label: "Weekly", value: "weekly" },
+                      { label: "Monthly", value: "monthly" },
+                    ]}
+                    value={recurrence}
+                    onChange={setRecurrence}
+                    helpText="Recurring imports re-run automatically using the same file"
+                  />
 
-              {"error" in (actionData ?? {}) && (
-                <Banner tone="critical">
-                  <p>{(actionData as { error: string }).error}</p>
-                </Banner>
-              )}
+                  {"error" in (actionData ?? {}) && (
+                    <Banner tone="critical">
+                      <p>{(actionData as { error: string }).error}</p>
+                    </Banner>
+                  )}
 
-              {"scheduled" in (actionData ?? {}) && (
-                <Banner tone="success">
-                  <p>Import scheduled for {new Date((actionData as { scheduledAt: string }).scheduledAt).toLocaleString()}</p>
-                </Banner>
-              )}
+                  {"scheduled" in (actionData ?? {}) && (
+                    <Banner tone="success">
+                      <p>Import scheduled for {new Date((actionData as { scheduledAt: string }).scheduledAt).toLocaleString()}</p>
+                    </Banner>
+                  )}
 
-              <Button
-                variant="primary"
-                disabled={!file || !scheduledAt || isSubmitting}
-                loading={isSubmitting}
-                onClick={handleSchedule}
-              >
-                Schedule Import
-              </Button>
+                  <Button
+                    variant="primary"
+                    disabled={!file || !scheduledAt || isSubmitting}
+                    loading={isSubmitting}
+                    onClick={handleSchedule}
+                  >
+                    Schedule Import
+                  </Button>
+                </BlockStack>
+              </Card>
+
+              <Card>
+                <BlockStack gap="400">
+                  <Text as="h2" variant="headingMd">Scheduled Imports</Text>
+                  <Divider />
+                  {scheduled.length === 0 ? (
+                    <Text as="p" tone="subdued">No scheduled imports.</Text>
+                  ) : (
+                    <DataTable
+                      columnContentTypes={["text", "text", "text", "text", "text", "text"]}
+                      headings={["File", "Scheduled for", "Status", "Repeat", "Strategy", ""]}
+                      rows={scheduled.map((s) => [
+                        s.fileName,
+                        new Date(s.scheduledAt).toLocaleString(),
+                        <Badge tone={statusTone(s.status)} key={s.id}>{s.status}</Badge>,
+                        s.recurrence !== "none" ? <Badge key={`r-${s.id}`}>{s.recurrence}</Badge> : "—",
+                        s.duplicateStrategy,
+                        s.status === "PENDING"
+                          ? <Button variant="plain" tone="critical" onClick={() => handleDelete(s.id)} key={s.id}>Cancel</Button>
+                          : "—",
+                      ])}
+                    />
+                  )}
+                </BlockStack>
+              </Card>
             </BlockStack>
-          </Card>
-        </Layout.Section>
-
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">Scheduled Imports</Text>
-              <Divider />
-              {scheduled.length === 0 ? (
-                <Text as="p" tone="subdued">No scheduled imports.</Text>
-              ) : (
-                <DataTable
-                  columnContentTypes={["text", "text", "text", "text", "text", "text"]}
-                  headings={["File", "Scheduled for", "Status", "Repeat", "Strategy", ""]}
-                  rows={scheduled.map((s) => [
-                    s.fileName,
-                    new Date(s.scheduledAt).toLocaleString(),
-                    <Badge tone={statusTone(s.status)} key={s.id}>{s.status}</Badge>,
-                    s.recurrence !== "none" ? <Badge key={`r-${s.id}`}>{s.recurrence}</Badge> : "—",
-                    s.duplicateStrategy,
-                    s.status === "PENDING"
-                      ? <Button variant="plain" tone="critical" onClick={() => handleDelete(s.id)} key={s.id}>Cancel</Button>
-                      : "—",
-                  ])}
-                />
-              )}
-            </BlockStack>
-          </Card>
+          </PlanGate>
         </Layout.Section>
       </Layout>
     </Page>

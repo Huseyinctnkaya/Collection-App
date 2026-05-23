@@ -27,6 +27,7 @@ import { parseFile } from "../services/parser.server";
 import { runImport } from "../services/importer.server";
 import { fetchGoogleSheetAsCSV } from "../services/sheets.server";
 import { getCachedPlan, getLimits, getMonthlyImportCount } from "../services/plan.server";
+import { PlanGate } from "../components/PlanGate";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const BULK_THRESHOLD = 50;
@@ -531,6 +532,12 @@ export default function ImportPage() {
 
         {/* Google Sheets Import */}
         <Layout.Section>
+          <PlanGate
+            currentPlan={currentPlan}
+            requiredPlan="pro"
+            featureName="Google Sheets Import"
+            description="Import collections directly from a public Google Sheets URL. Available on Pro and Premium plans."
+          >
           <Card>
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
@@ -576,6 +583,7 @@ export default function ImportPage() {
               </InlineStack>
             </BlockStack>
           </Card>
+          </PlanGate>
         </Layout.Section>
 
         <Layout.Section>
