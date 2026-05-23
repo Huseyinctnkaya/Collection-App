@@ -18,7 +18,7 @@ import {
 import { CheckIcon } from "@shopify/polaris-icons";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
-import { PLANS, type PlanName } from "../services/plan.server";
+import { PLANS, type PlanName } from "../services/plan.shared";
 import { APP_SUBSCRIPTION_CREATE, APP_SUBSCRIPTION_CANCEL, CURRENT_APP_SUBSCRIPTION } from "../graphql/mutations";
 
 const PLAN_ORDER: PlanName[] = ["free", "pro", "premium"];

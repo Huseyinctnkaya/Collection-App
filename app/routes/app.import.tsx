@@ -138,7 +138,7 @@ async function startImportFromBuffer({
   duplicateStrategy: "skip" | "overwrite";
   isDryRun: boolean;
   templateId: string | null;
-  limits: import("../services/plan.server").PlanLimits;
+  limits: import("../services/plan.shared").PlanLimits;
 }) {
   let columnMap: Record<string, string> | undefined;
   if (templateId) {
