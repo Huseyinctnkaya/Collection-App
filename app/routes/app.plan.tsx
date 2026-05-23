@@ -2,6 +2,7 @@ import { json, redirect } from "@remix-run/node";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { useActionData, useLoaderData, useNavigation } from "@remix-run/react";
 import { Form } from "@remix-run/react";
+import { useEffect } from "react";
 import {
   Page,
   Layout,
@@ -112,8 +113,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  // authenticate.admin returns its own redirect that handles embedded app headers
-  const { admin, session, redirect: shopifyRedirect } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = formData.get("intent") as string;
 
@@ -149,8 +149,8 @@ export async function action({ request }: ActionFunctionArgs) {
     const confirmationUrl = data?.appSubscriptionCreate?.confirmationUrl;
     if (!confirmationUrl) return json({ error: "Shopify didn't return a confirmation URL. Check app billing settings." }, { status: 500 });
 
-    // shopifyRedirect handles embedded app iframe breakout automatically
-    return shopifyRedirect(confirmationUrl);
+    // Return URL to client — window.top breaks out of the embedded app iframe
+    return json({ confirmationUrl });
   }
 
   if (intent === "cancel") {
@@ -164,7 +164,7 @@ export async function action({ request }: ActionFunctionArgs) {
       create: { shop: session.shop, plan: "free", subscriptionId: null },
       update: { plan: "free", subscriptionId: null },
     });
-    return shopifyRedirect("/app/plan");
+    return redirect("/app/plan");
   }
 
   return json({ error: "Unknown intent" }, { status: 400 });
@@ -197,6 +197,14 @@ export default function PlanPage() {
   const actionError = actionData && "error" in actionData
     ? (actionData as { error: string }).error
     : null;
+
+  useEffect(() => {
+    if (actionData && "confirmationUrl" in actionData) {
+      const url = (actionData as { confirmationUrl: string }).confirmationUrl;
+      // _top breaks out of all iframes — required for Shopify embedded apps
+      window.open(url, "_top");
+    }
+  }, [actionData]);
 
   return (
     <Page
