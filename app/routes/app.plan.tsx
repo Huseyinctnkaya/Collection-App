@@ -2,7 +2,6 @@ import { json, redirect } from "@remix-run/node";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { useActionData, useLoaderData, useNavigation } from "@remix-run/react";
 import { Form } from "@remix-run/react";
-import { useEffect } from "react";
 import {
   Page,
   Layout,
@@ -113,7 +112,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  const { admin, session } = await authenticate.admin(request);
+  // authenticate.admin returns its own redirect that handles embedded app headers
+  const { admin, session, redirect: shopifyRedirect } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = formData.get("intent") as string;
 
@@ -122,8 +122,7 @@ export async function action({ request }: ActionFunctionArgs) {
     const planDef = PLANS[plan];
     if (!planDef || plan === "free") return json({ error: "Invalid plan" }, { status: 400 });
 
-    const appUrl = process.env.SHOPIFY_APP_URL ?? `https://${session.shop}/admin/apps/${process.env.SHOPIFY_API_KEY}`;
-    const returnUrl = `${appUrl}/app/plan?activated=true`;
+    const returnUrl = `${process.env.SHOPIFY_APP_URL}/app/plan?activated=true`;
 
     const res = await admin.graphql(APP_SUBSCRIPTION_CREATE, {
       variables: {
@@ -144,15 +143,14 @@ export async function action({ request }: ActionFunctionArgs) {
     });
 
     const { data } = await res.json();
-    const errors = data?.appSubscriptionCreate?.userErrors ?? [];
-    if (errors.length > 0) return json({ error: errors[0].message }, { status: 422 });
+    const userErrors = data?.appSubscriptionCreate?.userErrors ?? [];
+    if (userErrors.length > 0) return json({ error: userErrors[0].message }, { status: 422 });
 
     const confirmationUrl = data?.appSubscriptionCreate?.confirmationUrl;
-    if (!confirmationUrl) return json({ error: "Failed to create subscription" }, { status: 500 });
+    if (!confirmationUrl) return json({ error: "Shopify didn't return a confirmation URL. Check app billing settings." }, { status: 500 });
 
-    // Return the URL to the client — the component uses window.top.location.href
-    // because server-side redirect() can't break out of the Shopify embedded app iframe
-    return json({ confirmationUrl });
+    // shopifyRedirect handles embedded app iframe breakout automatically
+    return shopifyRedirect(confirmationUrl);
   }
 
   if (intent === "cancel") {
@@ -160,14 +158,13 @@ export async function action({ request }: ActionFunctionArgs) {
     if (!subscriptionId) return json({ error: "No active subscription" }, { status: 400 });
 
     await admin.graphql(APP_SUBSCRIPTION_CANCEL, { variables: { id: subscriptionId } });
-    // Clear the cached plan back to free
     const prisma = (await import("../db.server")).default;
     await prisma.shopPlan.upsert({
       where: { shop: session.shop },
       create: { shop: session.shop, plan: "free", subscriptionId: null },
       update: { plan: "free", subscriptionId: null },
     });
-    return redirect("/app/plan");
+    return shopifyRedirect("/app/plan");
   }
 
   return json({ error: "Unknown intent" }, { status: 400 });
@@ -197,12 +194,9 @@ export default function PlanPage() {
     ? (navigation.formData?.get("intent") as string | null)
     : null;
 
-  // Redirect to Shopify billing confirmation page — must use window.top to break out of iframe
-  useEffect(() => {
-    if (actionData && "confirmationUrl" in actionData) {
-      window.top!.location.href = (actionData as { confirmationUrl: string }).confirmationUrl;
-    }
-  }, [actionData]);
+  const actionError = actionData && "error" in actionData
+    ? (actionData as { error: string }).error
+    : null;
 
   return (
     <Page
@@ -216,6 +210,14 @@ export default function PlanPage() {
           <Layout.Section>
             <Banner tone="success" title="Plan activated successfully!">
               <Text as="p">Your new plan is now active. All features are unlocked immediately.</Text>
+            </Banner>
+          </Layout.Section>
+        )}
+
+        {actionError && (
+          <Layout.Section>
+            <Banner tone="critical" title="Billing error">
+              <Text as="p">{actionError}</Text>
             </Banner>
           </Layout.Section>
         )}
