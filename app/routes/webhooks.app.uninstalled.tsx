@@ -13,5 +13,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     await db.session.deleteMany({ where: { shop } });
   }
 
+  // Reset plan to free on uninstall so reinstalling starts clean
+  await db.shopPlan.deleteMany({ where: { shop } });
+
   return new Response();
 };
