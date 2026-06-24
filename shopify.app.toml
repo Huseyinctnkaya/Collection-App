@@ -2,7 +2,7 @@
 
 client_id = "c89e872cb9a5a3d6fc89642dce20a439"
 name = "collection-studio"
-application_url = "https://example.com"
+application_url = "https://collectionstudio.app"
 embedded = true
 
 [build]
@@ -32,4 +32,4 @@ api_version = "2026-07"
 scopes = "write_products,read_products"
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [ "https://collectionstudio.app/api/auth" ]
