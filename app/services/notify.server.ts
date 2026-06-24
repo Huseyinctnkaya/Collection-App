@@ -49,7 +49,7 @@ async function triggerFlowWebhook(webhookUrl: string, job: JobSummary, shop: str
   });
 }
 
-async function sendEmail(to: string, title: string, body: string) {
+export async function sendEmail(to: string, title: string, body: string) {
   const smtpHost = process.env.SMTP_HOST;
   const smtpPort = Number(process.env.SMTP_PORT ?? 587);
   const smtpUser = process.env.SMTP_USER;

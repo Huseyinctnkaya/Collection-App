@@ -22,6 +22,7 @@ import { authenticate } from "../shopify.server";
 import { PlanGate } from "../components/PlanGate";
 import prisma from "../db.server";
 import { getCachedPlan } from "../services/plan.server";
+import { sendEmail } from "../services/notify.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
@@ -29,12 +30,24 @@ export async function loader({ request }: LoaderFunctionArgs) {
     prisma.notificationSetting.findUnique({ where: { shop: session.shop } }),
     getCachedPlan(session.shop),
   ]);
-  return json({ settings, currentPlan });
+  const smtpConfigured = !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+  return json({ settings, currentPlan, smtpConfigured });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
   const { session } = await authenticate.admin(request);
   const formData = await request.formData();
+  const intent = formData.get("intent");
+
+  if (intent === "test-email") {
+    const email = formData.get("email") as string;
+    if (!email) return json({ error: "Enter an email address first" }, { status: 400 });
+    const smtpConfigured = !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+    if (!smtpConfigured) return json({ error: "SMTP is not configured on the server" }, { status: 400 });
+
+    await sendEmail(email, "✅ Test email from Collection Studio", "Email notifications are working correctly.");
+    return json({ tested: true });
+  }
 
   const email = (formData.get("email") as string) || null;
   const slackWebhookUrl = (formData.get("slackWebhookUrl") as string) || null;
@@ -64,7 +77,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function NotificationsPage() {
-  const { settings, currentPlan } = useLoaderData<typeof loader>();
+  const { settings, currentPlan, smtpConfigured } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const isSaving = navigation.state === "submitting";
@@ -190,33 +203,40 @@ export default function NotificationsPage() {
         </Layout.Section>
 
         <Layout.Section variant="oneThird">
-          <Card>
-            <BlockStack gap="300">
-              <Text as="h2" variant="headingMd">Setup Guide</Text>
-              <Divider />
-              <Text as="p" variant="bodyMd" fontWeight="semibold">Email</Text>
-              <Text as="p" tone="subdued" variant="bodySm">
-                Configure SMTP settings via environment variables:
-              </Text>
-              <BlockStack gap="100">
-                <Text as="p" variant="bodySm"><code>SMTP_HOST</code></Text>
-                <Text as="p" variant="bodySm"><code>SMTP_PORT</code> (default: 587)</Text>
-                <Text as="p" variant="bodySm"><code>SMTP_USER</code></Text>
-                <Text as="p" variant="bodySm"><code>SMTP_PASS</code></Text>
-                <Text as="p" variant="bodySm"><code>SMTP_FROM</code> (optional)</Text>
+          <BlockStack gap="400">
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">Email Status</Text>
+                <Divider />
+                <InlineStack gap="200" blockAlign="center">
+                  <Badge tone={smtpConfigured ? "success" : "critical"}>
+                    {smtpConfigured ? "SMTP Configured" : "SMTP Not Configured"}
+                  </Badge>
+                </InlineStack>
+                {smtpConfigured && (
+                  <Form method="post">
+                    <input type="hidden" name="intent" value="test-email" />
+                    <input type="hidden" name="email" value={email} />
+                    <Button submit disabled={!email || isSaving}>
+                      Send Test Email
+                    </Button>
+                  </Form>
+                )}
+                {"tested" in (actionData ?? {}) && (
+                  <Banner tone="success"><p>Test email sent!</p></Banner>
+                )}
               </BlockStack>
-              <Divider />
-              <Text as="p" variant="bodyMd" fontWeight="semibold">Slack</Text>
-              <Text as="p" tone="subdued" variant="bodySm">
-                Go to your Slack workspace → Settings → Integrations → Incoming Webhooks → Add New Webhook.
-              </Text>
-              <Divider />
-              <Text as="p" variant="bodyMd" fontWeight="semibold">Shopify Flow</Text>
-              <Text as="p" tone="subdued" variant="bodySm">
-                In Flow, create an automation with a "Receive webhook from app" trigger. Copy the webhook URL and paste it here. The payload includes: shop, importId, fileName, status, successCount, errorCount, totalRows.
-              </Text>
-            </BlockStack>
-          </Card>
+            </Card>
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">Slack Setup</Text>
+                <Divider />
+                <Text as="p" tone="subdued" variant="bodySm">
+                  Go to your Slack workspace → Settings → Integrations → Incoming Webhooks → Add New Webhook.
+                </Text>
+              </BlockStack>
+            </Card>
+          </BlockStack>
         </Layout.Section>
       </Layout>
     </Page>
