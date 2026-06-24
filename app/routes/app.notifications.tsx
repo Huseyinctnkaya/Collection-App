@@ -16,8 +16,8 @@ import {
   InlineStack,
   Badge,
 } from "@shopify/polaris";
-import { TitleBar } from "@shopify/app-bridge-react";
-import { useState, useCallback } from "react";
+import { TitleBar, SaveBar, useAppBridge } from "@shopify/app-bridge-react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { authenticate } from "../shopify.server";
 import { PlanGate } from "../components/PlanGate";
 import prisma from "../db.server";
@@ -81,15 +81,40 @@ export default function NotificationsPage() {
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const isSaving = navigation.state === "submitting";
+  const shopify = useAppBridge();
+  const formRef = useRef<HTMLFormElement>(null);
 
-  const [email, setEmail] = useState(settings?.email ?? "");
-  const [slackWebhookUrl, setSlackWebhookUrl] = useState(settings?.slackWebhookUrl ?? "");
-  const [flowWebhookUrl, setFlowWebhookUrl] = useState(settings?.flowWebhookUrl ?? "");
-  const [notifyOnComplete, setNotifyOnComplete] = useState(settings?.notifyOnComplete ?? true);
-  const [notifyOnFail, setNotifyOnFail] = useState(settings?.notifyOnFail ?? true);
+  const initialEmail = settings?.email ?? "";
+  const initialSlack = settings?.slackWebhookUrl ?? "";
+  const initialFlow = settings?.flowWebhookUrl ?? "";
+  const initialNotifyOnComplete = settings?.notifyOnComplete ?? true;
+  const initialNotifyOnFail = settings?.notifyOnFail ?? true;
 
-  const handleNotifyOnComplete = useCallback((v: boolean) => setNotifyOnComplete(v), []);
-  const handleNotifyOnFail = useCallback((v: boolean) => setNotifyOnFail(v), []);
+  const [email, setEmail] = useState(initialEmail);
+  const [slackWebhookUrl, setSlackWebhookUrl] = useState(initialSlack);
+  const [flowWebhookUrl, setFlowWebhookUrl] = useState(initialFlow);
+  const [notifyOnComplete, setNotifyOnComplete] = useState(initialNotifyOnComplete);
+  const [notifyOnFail, setNotifyOnFail] = useState(initialNotifyOnFail);
+
+  useEffect(() => {
+    if (actionData && "saved" in actionData) {
+      shopify.saveBar.hide("notifications-save-bar");
+    }
+  }, [actionData, shopify]);
+
+  const markDirty = useCallback(() => shopify.saveBar.show("notifications-save-bar"), [shopify]);
+
+  const handleDiscard = useCallback(() => {
+    setEmail(initialEmail);
+    setSlackWebhookUrl(initialSlack);
+    setFlowWebhookUrl(initialFlow);
+    setNotifyOnComplete(initialNotifyOnComplete);
+    setNotifyOnFail(initialNotifyOnFail);
+    shopify.saveBar.hide("notifications-save-bar");
+  }, [initialEmail, initialSlack, initialFlow, initialNotifyOnComplete, initialNotifyOnFail, shopify]);
+
+  const handleNotifyOnComplete = useCallback((v: boolean) => { setNotifyOnComplete(v); markDirty(); }, [markDirty]);
+  const handleNotifyOnFail = useCallback((v: boolean) => { setNotifyOnFail(v); markDirty(); }, [markDirty]);
 
   return (
     <Page
@@ -98,9 +123,13 @@ export default function NotificationsPage() {
       backAction={{ content: "Import", url: "/app/import" }}
     >
       <TitleBar title="Notifications" />
+      <SaveBar id="notifications-save-bar">
+        <button variant="primary" onClick={() => formRef.current?.submit()}>Save</button>
+        <button onClick={handleDiscard}>Discard</button>
+      </SaveBar>
       <Layout>
         <Layout.Section>
-          <Form method="post">
+          <Form method="post" ref={formRef}>
             <input type="hidden" name="notifyOnComplete" value={String(notifyOnComplete)} />
             <input type="hidden" name="notifyOnFail" value={String(notifyOnFail)} />
 
@@ -126,7 +155,7 @@ export default function NotificationsPage() {
                     type="email"
                     name="email"
                     value={email}
-                    onChange={setEmail}
+                    onChange={(v) => { setEmail(v); markDirty(); }}
                     helpText="Leave blank to disable email notifications"
                     autoComplete="email"
                   />
@@ -144,7 +173,7 @@ export default function NotificationsPage() {
                     label="Slack webhook URL"
                     name="slackWebhookUrl"
                     value={slackWebhookUrl}
-                    onChange={setSlackWebhookUrl}
+                    onChange={(v) => { setSlackWebhookUrl(v); markDirty(); }}
                     placeholder="https://hooks.slack.com/services/..."
                     helpText="Create an Incoming Webhook in your Slack workspace settings"
                     autoComplete="off"
@@ -169,7 +198,7 @@ export default function NotificationsPage() {
                       label="Webhook URL"
                       name="flowWebhookUrl"
                       value={flowWebhookUrl}
-                      onChange={setFlowWebhookUrl}
+                      onChange={(v) => { setFlowWebhookUrl(v); markDirty(); }}
                       placeholder="https://your-flow-endpoint.com/webhook"
                       helpText="A POST request with import summary JSON will be sent here when an import finishes. Works with Shopify Flow 'Receive webhook', Make, Zapier, or any HTTP trigger."
                       autoComplete="off"
@@ -195,9 +224,6 @@ export default function NotificationsPage() {
                 </BlockStack>
               </Card>
 
-              <Button variant="primary" submit loading={isSaving} disabled={isSaving}>
-                Save Settings
-              </Button>
             </BlockStack>
           </Form>
         </Layout.Section>
