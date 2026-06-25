@@ -295,8 +295,28 @@ export default function ImportPage() {
       title="Collection Studio"
       subtitle="Upload a CSV or Excel file to bulk-create Shopify collections"
       secondaryActions={[
-        { content: "Download CSV Template", onAction: () => { window.open("/app/template", "_top"); } },
-        { content: "Export Existing Collections", onAction: () => { window.open("/app/export", "_top"); } },
+        {
+          content: "Download CSV Template",
+          onAction: async () => {
+            const res = await fetch("/app/template");
+            const blob = await res.blob();
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = "collections-template.csv";
+            a.click();
+          },
+        },
+        {
+          content: "Export Existing Collections",
+          onAction: async () => {
+            const res = await fetch("/app/export");
+            const blob = await res.blob();
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = "collections-export.csv";
+            a.click();
+          },
+        },
       ]}
     >
       <Layout>
