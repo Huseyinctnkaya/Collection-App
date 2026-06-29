@@ -122,7 +122,7 @@ export async function action({ request }: ActionFunctionArgs) {
     const planDef = PLANS[plan];
     if (!planDef || plan === "free") return json({ error: "Invalid plan" }, { status: 400 });
 
-    const returnUrl = `${process.env.SHOPIFY_APP_URL}/app/plan?activated=true`;
+    const returnUrl = `${process.env.SHOPIFY_APP_URL}/app/plan?activated=true&shop=${session.shop}`;
 
     const res = await admin.graphql(APP_SUBSCRIPTION_CREATE, {
       variables: {
