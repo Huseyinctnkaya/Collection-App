@@ -305,7 +305,14 @@ async function runBulkImport({
   const stageData = await stageResponse.json();
   const target = stageData?.data?.stagedUploadsCreate?.stagedTargets?.[0];
 
-  if (!target) throw new Error("Failed to create staged upload");
+  if (!target) {
+    const stageErrors = stageData?.data?.stagedUploadsCreate?.userErrors ?? [];
+    throw new Error(
+      stageErrors.length > 0
+        ? `Failed to create staged upload: ${stageErrors[0].message}`
+        : "Failed to create staged upload"
+    );
+  }
 
   // Step 2: Upload JSONL to staged target
   const formData = new FormData();
@@ -328,7 +335,7 @@ async function runBulkImport({
   const bulkResponse = await admin.graphql(BULK_OPERATION_RUN_MUTATION, {
     variables: {
       mutation: bulkMutation,
-      stagedUploadPath: target.resourceUrl,
+      stagedUploadPath: resolveStagedUploadPath(target),
     },
   });
 
@@ -342,6 +349,21 @@ async function runBulkImport({
     data: { bulkOperationId: bulkOpId, status: "RUNNING" },
   });
   // Completion is handled via webhook (bulk_operations/finish)
+}
+
+interface StagedTarget {
+  url: string;
+  resourceUrl: string | null;
+  parameters: Array<{ name: string; value: string }>;
+}
+
+// bulkOperationRunMutation expects the staged upload `key`, not `resourceUrl`.
+// Shopify returns resourceUrl: null for BULK_MUTATION_VARIABLES targets, so
+// passing it would send null into a String! argument and abort the operation.
+export function resolveStagedUploadPath(target: StagedTarget): string {
+  const key = target.parameters?.find((p) => p.name === "key")?.value;
+  if (!key) throw new Error("Staged upload target is missing the `key` parameter");
+  return key;
 }
 
 const RULE_COLUMN_ALIASES: Record<string, string> = {
