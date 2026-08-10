@@ -20,13 +20,15 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { rollbackJob } from "../services/rollback.server";
+import { recordBulkResults } from "../services/bulk-results.server";
+import { BULK_OPERATION_BY_ID } from "../graphql/mutations";
 import { getCachedPlan } from "../services/plan.server";
 import { hasAccess } from "../components/PlanGate";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
 
-  const [job, currentPlan] = await Promise.all([
+  let [job, currentPlan] = await Promise.all([
     prisma.importJob.findFirst({
       where: { id: params.id, shop: session.shop },
       include: {
@@ -38,7 +40,64 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   ]);
 
   if (!job) throw new Response("Not Found", { status: 404 });
+  const loaded = job;
+
+  // A bulk job that finished without counters means its results file was never
+  // read — the finish webhook was missed, or it ran before results were recorded.
+  // Backfill on view so the job is not stuck reporting 0 forever.
+  const needsBackfill =
+    loaded.bulkOperationId !== null &&
+    loaded.processedRows === 0 &&
+    ["COMPLETED", "PARTIAL", "FAILED"].includes(loaded.status);
+
+  if (needsBackfill) {
+    const refreshed = await backfillBulkJob(admin, loaded.id, loaded.bulkOperationId!).catch((err) => {
+      console.error(`Backfill failed for job ${loaded.id}:`, err);
+      return null;
+    });
+    if (refreshed) job = refreshed;
+  }
+
   return json({ job, currentPlan });
+}
+
+async function backfillBulkJob(
+  admin: Awaited<ReturnType<typeof authenticate.admin>>["admin"],
+  jobId: string,
+  bulkOperationId: string
+) {
+  const opRes = await admin.graphql(BULK_OPERATION_BY_ID, { variables: { id: bulkOperationId } });
+  const opData = await opRes.json();
+  const node = opData?.data?.node;
+
+  // Shopify keeps result files for a limited window; without one there is
+  // nothing to recover and the job stays as it is.
+  if (node?.status !== "COMPLETED" || !node?.url) return null;
+
+  const tally = await recordBulkResults({
+    jobId,
+    resultsUrl: node.url,
+    validRowNumbers: [],
+  });
+
+  await prisma.importJob.update({
+    where: { id: jobId },
+    data: {
+      processedRows: tally.processedRows,
+      successCount: tally.successCount,
+      errorCount: tally.errorCount,
+      status:
+        tally.errorCount === 0 ? "COMPLETED" : tally.successCount > 0 ? "PARTIAL" : "FAILED",
+    },
+  });
+
+  return prisma.importJob.findFirst({
+    where: { id: jobId },
+    include: {
+      errors: { orderBy: { row: "asc" } },
+      actions: { select: { id: true, action: true, collectionHandle: true } },
+    },
+  });
 }
 
 export async function action({ request, params }: ActionFunctionArgs) {
