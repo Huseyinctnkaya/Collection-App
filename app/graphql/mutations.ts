@@ -65,6 +65,22 @@ export const BULK_OPERATION_RUN_MUTATION = `#graphql
   }
 `;
 
+// Fetched by id via node() — the bulkOperation(id:) root field only exists in 2026-01+.
+export const BULK_OPERATION_BY_ID = `#graphql
+  query bulkOperationById($id: ID!) {
+    node(id: $id) {
+      ... on BulkOperation {
+        id
+        status
+        errorCode
+        objectCount
+        url
+        partialDataUrl
+      }
+    }
+  }
+`;
+
 export const BULK_OPERATION_STATUS = `#graphql
   query currentBulkOperation {
     currentBulkOperation(type: MUTATION) {
