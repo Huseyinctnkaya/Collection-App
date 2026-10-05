@@ -47,10 +47,39 @@ model ImportJob {
   rolledBack      Boolean        @default(false)
   errors          ImportError[]
   actions         ImportAction[]
+  bulkOperations  BulkOperation[]
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
   @@index([shop])
+}
+
+// One import can run two bulk operations: a collectionCreate pass for new rows
+// and a collectionUpdate pass for existing ones. Shopify runs a single mutation
+// per operation, so "update existing" needs its own pass, and each operation
+// finishes with its own webhook.
+model BulkOperation {
+  id          String    @id @default(cuid())
+  jobId       String
+  // Null until the operation is started. Shopify's per-shop concurrency limit
+  // depends on the API version, so the passes are queued and run one after the
+  // other: the next one starts when the previous one's webhook arrives.
+  operationId String?   @unique
+  // "collectionCreate" | "collectionUpdate"
+  mutation    String
+  // Staged upload key of the JSONL for this pass, uploaded when the job is
+  // planned so a queued pass can be started later without re-reading the file.
+  stagedPath  String
+  // JSON array of spreadsheet row numbers, indexed by JSONL line number, so
+  // reported errors point at the right line of the merchant's file.
+  rowNumbers  String
+  // "QUEUED" | "RUNNING" | "DONE"
+  status      String    @default("QUEUED")
+  createdAt   DateTime  @default(now())
+  job         ImportJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+  @@index([jobId, status])
 }
 
 model ImportAction {

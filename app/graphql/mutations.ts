@@ -242,3 +242,50 @@ export const TRANSLATIONS_REGISTER = `#graphql
     }
   }
 `;
+
+// Resolve existing collections for an import in one query per chunk of rows,
+// instead of one `collectionByHandle` per row. Fetches the same fields the
+// rollback snapshot needs. The `query` argument is a search, not an exact
+// match, so results are filtered against the requested handles/titles in
+// `collection-index.server.ts`.
+export const COLLECTIONS_FOR_IMPORT = `#graphql
+  query collectionsForImport($first: Int!, $after: String, $query: String!) {
+    collections(first: $first, after: $after, query: $query) {
+      nodes {
+        id
+        handle
+        title
+        descriptionHtml
+        sortOrder
+        image { src altText }
+        seo { title description }
+        ruleSet {
+          appliedDisjunctively
+          rules { column relation condition }
+        }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+`;
+
+// Mutation documents passed as the `mutation` argument of
+// bulkOperationRunMutation. A bulk operation runs exactly one mutation over
+// every line of its JSONL, so importing in "update existing" mode needs its
+// own collectionUpdate pass — it cannot be expressed inside a create pass.
+export const BULK_MUTATION_DOCUMENTS = {
+  collectionCreate: `mutation collectionCreate($input: CollectionInput!) {
+    collectionCreate(input: $input) {
+      collection { id title handle }
+      userErrors { field message }
+    }
+  }`,
+  collectionUpdate: `mutation collectionUpdate($input: CollectionInput!) {
+    collectionUpdate(input: $input) {
+      collection { id title handle }
+      userErrors { field message }
+    }
+  }`,
+} as const;
+
+export type BulkMutationName = keyof typeof BULK_MUTATION_DOCUMENTS;

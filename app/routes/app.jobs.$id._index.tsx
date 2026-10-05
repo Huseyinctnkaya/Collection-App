@@ -51,7 +51,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     ["COMPLETED", "PARTIAL", "FAILED"].includes(loaded.status);
 
   if (needsBackfill) {
-    const refreshed = await backfillBulkJob(admin, loaded.id, loaded.bulkOperationId!).catch((err) => {
+    const refreshed = await backfillBulkJob(admin, loaded.id).catch((err) => {
       console.error(`Backfill failed for job ${loaded.id}:`, err);
       return null;
     });
@@ -63,36 +63,55 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 
 async function backfillBulkJob(
   admin: Awaited<ReturnType<typeof authenticate.admin>>["admin"],
-  jobId: string,
-  bulkOperationId: string
+  jobId: string
 ) {
-  const opRes = await admin.graphql(BULK_OPERATION_BY_ID, { variables: { id: bulkOperationId } });
-  const opData = await opRes.json();
-  const node = opData?.data?.node;
-
-  // Shopify keeps result files for a limited window; without one there is
-  // nothing to recover and the job stays as it is.
-  if (node?.status !== "COMPLETED" || !node?.url) return null;
-
-  const tally = await recordBulkResults({
-    jobId,
-    resultsUrl: node.url,
-    validRowNumbers: [],
+  // An import can have run two passes (collectionCreate for new rows,
+  // collectionUpdate for existing ones), each with its own results file and its
+  // own row numbering, so every recorded operation is replayed.
+  const operations = await prisma.bulkOperation.findMany({
+    where: { jobId, operationId: { not: null } },
+    orderBy: { createdAt: "asc" },
   });
 
-  await prisma.importJob.update({
+  if (operations.length === 0) return null;
+
+  let recorded = false;
+
+  for (const operation of operations) {
+    const opRes = await admin.graphql(BULK_OPERATION_BY_ID, {
+      variables: { id: operation.operationId! },
+    });
+    const opData = await opRes.json();
+    const node = opData?.data?.node;
+
+    // Shopify keeps result files for a limited window; without one there is
+    // nothing to recover for this pass.
+    if (node?.status !== "COMPLETED" || !node?.url) continue;
+
+    // Increments the job counters, so the passes add up instead of the last
+    // one overwriting the others.
+    await recordBulkResults({
+      jobId,
+      resultsUrl: node.url,
+      rowNumbers: JSON.parse(operation.rowNumbers) as number[],
+    });
+    recorded = true;
+  }
+
+  if (!recorded) return null;
+
+  const counted = await prisma.importJob.findUniqueOrThrow({ where: { id: jobId } });
+
+  return prisma.importJob.update({
     where: { id: jobId },
     data: {
-      processedRows: tally.processedRows,
-      successCount: tally.successCount,
-      errorCount: tally.errorCount,
       status:
-        tally.errorCount === 0 ? "COMPLETED" : tally.successCount > 0 ? "PARTIAL" : "FAILED",
+        counted.errorCount === 0
+          ? "COMPLETED"
+          : counted.successCount > 0
+            ? "PARTIAL"
+            : "FAILED",
     },
-  });
-
-  return prisma.importJob.findFirst({
-    where: { id: jobId },
     include: {
       errors: { orderBy: { row: "asc" } },
       actions: { select: { id: true, action: true, collectionHandle: true } },

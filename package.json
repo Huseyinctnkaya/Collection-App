@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "build": "remix vite:build",
+    "test": "node --test \"app/**/*.test.ts\"",
     "dev": "shopify app dev",
     "config:link": "shopify app config link",
     "generate": "shopify app generate",

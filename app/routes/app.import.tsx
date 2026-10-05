@@ -23,8 +23,10 @@ import { useState, useCallback, useEffect } from "react";
 import { useFetcher } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
-import { parseFile } from "../services/parser.server";
+import { parseFile, extractMetafields } from "../services/parser.server";
 import { runImport } from "../services/importer.server";
+import { fetchExistingIndex } from "../services/collection-index.server";
+import { planImport, matchExisting, type PlanRow } from "../services/import-plan.server";
 import { fetchGoogleSheetAsCSV } from "../services/sheets.server";
 import { getCachedPlan, getLimits, getMonthlyImportCount } from "../services/plan.server";
 import { PlanGate } from "../components/PlanGate";
@@ -189,16 +191,58 @@ async function startImportFromBuffer({
   const useBulk = parseResult.validRows > BULK_THRESHOLD;
 
   if (isDryRun) {
+    // A preview that only parses the file tells the merchant nothing about what
+    // the import will do. Resolving existing collections here is what makes
+    // "will create" / "will update" / "will skip" real, and it surfaces
+    // problems like an ambiguous title before anything is written.
+    const planRows: PlanRow[] = parseResult.rows
+      .filter((r) => r.data !== null)
+      .map((r) => ({ row: r.row, data: r.data!, metafields: extractMetafields(r.rawRow) }));
+
+    let actionByRow = new Map<number, string>();
+    let planErrorsByRow = new Map<number, string>();
+    let lookupError: string | null = null;
+
+    try {
+      const index = await fetchExistingIndex(admin, planRows);
+      const plan = planImport({
+        rows: planRows,
+        index,
+        duplicateStrategy,
+        columns: new Set(parseResult.rows.flatMap((r) => Object.keys(r.rawRow))),
+      });
+      actionByRow = new Map([
+        ...plan.creates.map((p) => [p.row, "create"] as const),
+        ...plan.updates.map((p) => [p.row, "update"] as const),
+        ...plan.skipped.map((p) => [p.row, "skip"] as const),
+      ]);
+      planErrorsByRow = new Map(plan.failed.map((f) => [f.row, f.message] as const));
+    } catch (err) {
+      lookupError = err instanceof Error ? err.message : "Unknown error";
+    }
+
+    const matchedRows = [...actionByRow.values()];
+
     return json({
       dryRun: true,
       totalRows: parseResult.totalRows,
       validRows: parseResult.validRows,
       errorRows: parseResult.errorRows,
+      lookupError,
+      willCreate: matchedRows.filter((a) => a === "create").length,
+      willUpdate: matchedRows.filter((a) => a === "update").length,
+      willSkip: matchedRows.filter((a) => a === "skip").length,
+      metafieldColumns: [
+        ...new Set(parseResult.rows.flatMap((r) => Object.keys(r.rawRow)).filter((c) => c.startsWith("metafield."))),
+      ],
       preview: parseResult.rows.slice(0, 24).map((r) => ({
         row: r.row,
         valid: r.errors.length === 0,
         title: r.data?.title ?? "—",
         handle: r.data?.handle ?? "",
+        action: actionByRow.get(r.row) ?? null,
+        planError: planErrorsByRow.get(r.row) ?? null,
+        metafieldCount: r.data ? extractMetafields(r.rawRow).length : 0,
         type: r.data?.rules ? "smart" : "manual",
         rules: r.data?.rules ?? "",
         products: r.data?.products ?? "",
@@ -422,8 +466,10 @@ export default function ImportPage() {
               </InlineStack>
 
               {"dryRun" in (actionData ?? {}) && (() => {
-                type PreviewItem = { row: number; valid: boolean; title: string; handle: string; type: string; rules: string; products: string; sortOrder: string; imageUrl: string; description: string; errors: Array<{ field: string; message: string }> };
-                const d = actionData as { dryRun: true; totalRows: number; validRows: number; errorRows: number; preview: PreviewItem[] };
+                type PreviewItem = { row: number; valid: boolean; title: string; handle: string; action: "create" | "update" | "skip" | null; planError: string | null; metafieldCount: number; type: string; rules: string; products: string; sortOrder: string; imageUrl: string; description: string; errors: Array<{ field: string; message: string }> };
+                const d = actionData as { dryRun: true; totalRows: number; validRows: number; errorRows: number; lookupError: string | null; willCreate: number; willUpdate: number; willSkip: number; metafieldColumns: string[]; preview: PreviewItem[] };
+                const actionLabels = { create: "Will create", update: "Will update", skip: "Will skip" } as const;
+                const actionTones = { create: "new", update: "attention", skip: "info" } as const;
                 return (
                   <BlockStack gap="400">
                     <Banner tone={d.errorRows > 0 ? "warning" : "success"}>
@@ -433,6 +479,32 @@ export default function ImportPage() {
                         <Text as="span" tone="subdued">Nothing was imported — this is a preview only</Text>
                       </InlineStack>
                     </Banner>
+
+                    {d.lookupError ? (
+                      <Banner tone="critical" title="Could not check which collections already exist">
+                        <p>{d.lookupError}</p>
+                        <p>Running the import now could create duplicates instead of updating. Try the preview again in a minute.</p>
+                      </Banner>
+                    ) : (
+                      <Banner tone="info" title="What this import will do">
+                        <InlineStack gap="400">
+                          <Text as="span" fontWeight="bold">{d.willUpdate} existing collections updated</Text>
+                          <Text as="span" fontWeight="bold">{d.willCreate} new collections created</Text>
+                          {d.willSkip > 0 && (
+                            <Text as="span" fontWeight="bold">{d.willSkip} skipped (already exist)</Text>
+                          )}
+                        </InlineStack>
+                        {d.metafieldColumns.length > 0 && (
+                          <p>Metafields: {d.metafieldColumns.join(", ")}</p>
+                        )}
+                        {d.willSkip > 0 && duplicateStrategy === "skip" && (
+                          <p>
+                            Those rows will not be touched. Choose &ldquo;Overwrite (update existing)&rdquo; above to
+                            write metafields onto collections that already exist.
+                          </p>
+                        )}
+                      </Banner>
+                    )}
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "16px" }}>
                       {d.preview.map((p) => (
                         <div key={p.row} style={{ position: "relative", borderRadius: "12px", overflow: "hidden", border: p.valid ? "1px solid #e1e3e5" : "2px solid #d72c0d", background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>
@@ -450,6 +522,10 @@ export default function ImportPage() {
                           }}>
                             <InlineStack gap="100">
                               <Badge tone={p.type === "smart" ? "success" : "new"}>{p.type === "smart" ? "Smart" : "Manual"}</Badge>
+                              {p.action && <Badge tone={actionTones[p.action]}>{actionLabels[p.action]}</Badge>}
+                              {p.metafieldCount > 0 && (
+                                <Badge>{`${p.metafieldCount} metafield${p.metafieldCount === 1 ? "" : "s"}`}</Badge>
+                              )}
                               {!p.valid && <Badge tone="critical">Error</Badge>}
                             </InlineStack>
                           </div>
@@ -479,6 +555,11 @@ export default function ImportPage() {
                             {!p.valid && p.errors.length > 0 && (
                               <div style={{ marginTop: 6, fontSize: 11, color: "#d72c0d" }}>
                                 {p.errors[0].message}
+                              </div>
+                            )}
+                            {p.planError && (
+                              <div style={{ marginTop: 6, fontSize: 11, color: "#d72c0d" }}>
+                                {p.planError}
                               </div>
                             )}
                           </div>
