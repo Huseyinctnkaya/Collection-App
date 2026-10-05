@@ -25,9 +25,18 @@ export async function action({ request }: ActionFunctionArgs) {
     include: { job: true },
   });
 
-  if (!operation) return new Response("Operation not found", { status: 200 });
+  // Jobs started before multi-pass imports existed have no BulkOperation row,
+  // so they are matched the old way. Without this, an import that is already
+  // running when this version deploys would never be finalised.
+  const legacyJob = operation
+    ? null
+    : await prisma.importJob.findFirst({ where: { shop, bulkOperationId: bulkOpId } });
 
-  const job = operation.job;
+  if (!operation && !legacyJob) return new Response("Operation not found", { status: 200 });
+
+  const job = operation?.job ?? legacyJob!;
+  const mutationName = operation?.mutation ?? "collectionCreate";
+  const rowNumbers: number[] = operation ? (JSON.parse(operation.rowNumbers) as number[]) : [];
   let resultsRead = false;
 
   if (admin && status === "completed") {
@@ -42,7 +51,7 @@ export async function action({ request }: ActionFunctionArgs) {
         await recordBulkResults({
           jobId: job.id,
           resultsUrl,
-          rowNumbers: JSON.parse(operation.rowNumbers) as number[],
+          rowNumbers,
         });
         resultsRead = true;
       }
@@ -52,17 +61,19 @@ export async function action({ request }: ActionFunctionArgs) {
     }
   }
 
-  await prisma.bulkOperation.update({
-    where: { id: operation.id },
-    data: { status: "DONE" },
-  });
+  if (operation) {
+    await prisma.bulkOperation.update({
+      where: { id: operation.id },
+      data: { status: "DONE" },
+    });
+  }
 
   if (status === "failed") {
     await prisma.importError.create({
       data: {
         jobId: job.id,
         row: 0,
-        message: `Shopify reported the ${operation.mutation} pass as failed`,
+        message: `Shopify reported the ${mutationName} pass as failed`,
       },
     });
     await prisma.importJob.update({

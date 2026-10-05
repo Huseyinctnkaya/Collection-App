@@ -61,6 +61,12 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   return json({ job, currentPlan });
 }
 
+async function legacyOperations(jobId: string) {
+  const job = await prisma.importJob.findUnique({ where: { id: jobId } });
+  if (!job?.bulkOperationId) return [];
+  return [{ operationId: job.bulkOperationId, rowNumbers: "[]" }];
+}
+
 async function backfillBulkJob(
   admin: Awaited<ReturnType<typeof authenticate.admin>>["admin"],
   jobId: string
@@ -68,10 +74,17 @@ async function backfillBulkJob(
   // An import can have run two passes (collectionCreate for new rows,
   // collectionUpdate for existing ones), each with its own results file and its
   // own row numbering, so every recorded operation is replayed.
-  const operations = await prisma.bulkOperation.findMany({
+  const passes = await prisma.bulkOperation.findMany({
     where: { jobId, operationId: { not: null } },
     orderBy: { createdAt: "asc" },
   });
+
+  // Jobs from before multi-pass imports have no BulkOperation rows; they ran a
+  // single create pass, so their own bulkOperationId is replayed instead.
+  const operations =
+    passes.length > 0
+      ? passes.map((op) => ({ operationId: op.operationId!, rowNumbers: op.rowNumbers }))
+      : await legacyOperations(jobId);
 
   if (operations.length === 0) return null;
 
@@ -79,7 +92,7 @@ async function backfillBulkJob(
 
   for (const operation of operations) {
     const opRes = await admin.graphql(BULK_OPERATION_BY_ID, {
-      variables: { id: operation.operationId! },
+      variables: { id: operation.operationId },
     });
     const opData = await opRes.json();
     const node = opData?.data?.node;
