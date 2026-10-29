@@ -81,22 +81,6 @@ export const BULK_OPERATION_BY_ID = `#graphql
   }
 `;
 
-export const BULK_OPERATION_STATUS = `#graphql
-  query currentBulkOperation {
-    currentBulkOperation(type: MUTATION) {
-      id
-      status
-      errorCode
-      createdAt
-      completedAt
-      objectCount
-      fileSize
-      url
-      partialDataUrl
-    }
-  }
-`;
-
 export const COLLECTION_UPDATE = `#graphql
   mutation collectionUpdate($input: CollectionInput!) {
     collectionUpdate(input: $input) {
@@ -108,24 +92,6 @@ export const COLLECTION_UPDATE = `#graphql
       userErrors {
         field
         message
-      }
-    }
-  }
-`;
-
-export const COLLECTION_BY_HANDLE = `#graphql
-  query collectionByHandle($handle: String!) {
-    collectionByHandle(handle: $handle) {
-      id
-      handle
-      title
-      descriptionHtml
-      sortOrder
-      image { src altText }
-      seo { title description }
-      ruleSet {
-        appliedDisjunctively
-        rules { column relation condition }
       }
     }
   }
@@ -156,15 +122,6 @@ export const COLLECTIONS_LIST = `#graphql
         }
       }
       pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
-    }
-  }
-`;
-
-export const METAFIELDS_SET = `#graphql
-  mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-    metafieldsSet(metafields: $metafields) {
-      metafields { id namespace key value }
-      userErrors { field message }
     }
   }
 `;
