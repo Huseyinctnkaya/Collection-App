@@ -1,14 +1,6 @@
-interface ParsedSheetsUrl {
-  sheetId: string;
-  gid: string;
-}
+import { parseGoogleSheetsUrl } from "./sheets.logic";
 
-export function parseGoogleSheetsUrl(url: string): ParsedSheetsUrl | null {
-  const idMatch = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
-  if (!idMatch) return null;
-  const gidMatch = url.match(/[?#&]gid=(\d+)/);
-  return { sheetId: idMatch[1], gid: gidMatch ? gidMatch[1] : "0" };
-}
+export { parseGoogleSheetsUrl };
 
 export async function fetchGoogleSheetAsCSV(url: string): Promise<Buffer> {
   const parsed = parseGoogleSheetsUrl(url);
