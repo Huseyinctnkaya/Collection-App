@@ -4,17 +4,20 @@ import crypto from "node:crypto";
 import prisma from "../db.server";
 import { unauthenticated } from "../shopify.server";
 import { fetchGoogleSheetAsCSV } from "../services/sheets.server";
-import { parseCSV } from "../services/parser.server";
+import { parseFile } from "../services/parser.server";
 import { runImport } from "../services/importer.server";
 import { getCachedPlan, getLimits, getMonthlyImportCount } from "../services/plan.server";
 
 // POST /api/import-webhook
 // Headers: X-Import-Key: <raw key>
-// Body JSON: { shop, fileUrl, duplicateStrategy?, label? }
+// Body JSON: { shop, fileUrl, duplicateStrategy?, label?, template? }
 //
 // fileUrl can be:
 //   - A public CSV/XLSX URL
 //   - A Google Sheets URL (https://docs.google.com/spreadsheets/d/...)
+//
+// template is the name of a saved import template, applied the same way the
+// import page applies one.
 
 export async function action({ request }: ActionFunctionArgs) {
   if (request.method !== "POST") {
@@ -26,14 +29,20 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ error: "Missing X-Import-Key header" }, { status: 401 });
   }
 
-  let body: { shop?: string; fileUrl?: string; duplicateStrategy?: string; label?: string };
+  let body: {
+    shop?: string;
+    fileUrl?: string;
+    duplicateStrategy?: string;
+    label?: string;
+    template?: string;
+  };
   try {
     body = await request.json();
   } catch {
     return json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { shop, fileUrl, duplicateStrategy = "skip", label } = body;
+  const { shop, fileUrl, duplicateStrategy = "skip", label, template } = body;
   if (!shop) return json({ error: "Missing field: shop" }, { status: 400 });
   if (!fileUrl) return json({ error: "Missing field: fileUrl" }, { status: 400 });
 
@@ -75,8 +84,30 @@ export async function action({ request }: ActionFunctionArgs) {
     }
   }
 
-  // Fetch the file
   const isSheets = fileUrl.includes("docs.google.com/spreadsheets");
+  const ext: "csv" | "xlsx" = isSheets
+    ? "csv"
+    : fileUrl.split("?")[0].split(".").pop()?.toLowerCase() === "xlsx"
+      ? "xlsx"
+      : "csv";
+
+  if (ext === "xlsx" && !limits.allowedFileTypes.includes("xlsx")) {
+    return json(
+      { error: "Excel (.xlsx) files are available on Pro and Premium plans.", planError: true },
+      { status: 403 }
+    );
+  }
+
+  // A saved template renames the file's columns, exactly as it does for an
+  // upload. Looked up by name, since a name is what an API caller can write.
+  let columnMap: Record<string, string> | undefined;
+  if (template) {
+    const saved = await prisma.importTemplate.findFirst({ where: { shop, name: template } });
+    if (!saved) return json({ error: `No template named "${template}"` }, { status: 400 });
+    columnMap = JSON.parse(saved.columnMap) as Record<string, string>;
+  }
+
+  // Fetch the file
   let buffer: Buffer;
   try {
     if (isSheets) {
@@ -90,12 +121,13 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ error: `Failed to fetch file: ${err instanceof Error ? err.message : String(err)}` }, { status: 422 });
   }
 
-  const ext = isSheets ? "csv" : (fileUrl.split("?")[0].split(".").pop()?.toLowerCase() as "csv" | "xlsx" ?? "csv");
   const fileName = label ?? (isSheets ? "webhook-sheet.csv" : fileUrl.split("/").pop() ?? "webhook-import.csv");
 
   let parseResult;
   try {
-    parseResult = await parseCSV(buffer);
+    // Was always parseCSV, so an XLSX URL — which this endpoint documents as
+    // supported — was read as CSV and produced garbage or an error.
+    parseResult = await parseFile(buffer, ext, columnMap);
   } catch (err) {
     return json({ error: `Parse error: ${err instanceof Error ? err.message : String(err)}` }, { status: 422 });
   }

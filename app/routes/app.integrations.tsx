@@ -204,7 +204,8 @@ export default function IntegrationsPage() {
                   <Text as="p" variant="bodySm">{"  \"shop\": \"my-store.myshopify.com\","}</Text>
                   <Text as="p" variant="bodySm">{"  \"fileUrl\": \"https://...\" | \"https://docs.google.com/...\","}</Text>
                   <Text as="p" variant="bodySm">{"  \"duplicateStrategy\": \"skip\" | \"overwrite\","}</Text>
-                  <Text as="p" variant="bodySm">{"  \"label\": \"My Import\" (optional)"}</Text>
+                  <Text as="p" variant="bodySm">{"  \"label\": \"My Import\" (optional),"}</Text>
+                  <Text as="p" variant="bodySm">{"  \"template\": \"Supplier Format A\" (optional)"}</Text>
                   <Text as="p" variant="bodySm">{"}"}</Text>
                 </BlockStack>
               </Box>
@@ -216,6 +217,10 @@ export default function IntegrationsPage() {
               </Box>
               <Text as="p" tone="subdued" variant="bodySm">
                 The fileUrl can be a public CSV/XLSX URL or a public Google Sheets URL.
+              </Text>
+              <Text as="p" tone="subdued" variant="bodySm">
+                Pass <strong>template</strong> with the name of a saved import template to remap the
+                file&rsquo;s column names, the same as selecting one on the Import page.
               </Text>
             </BlockStack>
           </Card>
