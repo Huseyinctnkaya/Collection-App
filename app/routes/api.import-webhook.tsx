@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import prisma from "../db.server";
 import { unauthenticated } from "../shopify.server";
 import { fetchGoogleSheetAsCSV } from "../services/sheets.server";
+import { fetchRemoteFile } from "../services/safe-fetch.server";
 import { parseFile } from "../services/parser.server";
 import { runImport } from "../services/importer.server";
 import { getCachedPlan, getLimits, getMonthlyImportCount } from "../services/plan.server";
@@ -113,9 +114,10 @@ export async function action({ request }: ActionFunctionArgs) {
     if (isSheets) {
       buffer = await fetchGoogleSheetAsCSV(fileUrl);
     } else {
-      const res = await fetch(fileUrl);
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-      buffer = Buffer.from(await res.arrayBuffer());
+      // fileUrl comes from the request body, so it is fetched through the
+      // guarded fetcher: https only, public addresses only, every redirect
+      // re-checked, and the body capped.
+      buffer = await fetchRemoteFile(fileUrl);
     }
   } catch (err) {
     return json({ error: `Failed to fetch file: ${err instanceof Error ? err.message : String(err)}` }, { status: 422 });
