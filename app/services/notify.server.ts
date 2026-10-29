@@ -1,5 +1,6 @@
 import nodemailer from "nodemailer";
 import prisma from "../db.server";
+import { getCachedPlan, getLimits } from "./plan.server";
 
 interface JobSummary {
   id: string;
@@ -81,8 +82,14 @@ export async function notifyImportFinished(shop: string, job: JobSummary) {
     tasks.push(sendEmail(settings.email, title, body).catch(console.error));
   }
 
+  // Checked at send time as well as at save time: a shop that downgrades keeps
+  // whatever URL it saved while on a paid plan, and would otherwise go on
+  // receiving a paid feature indefinitely.
   if (settings.flowWebhookUrl) {
-    tasks.push(triggerFlowWebhook(settings.flowWebhookUrl, job, shop).catch(console.error));
+    const limits = getLimits(await getCachedPlan(shop));
+    if (limits.flowWebhookEnabled) {
+      tasks.push(triggerFlowWebhook(settings.flowWebhookUrl, job, shop).catch(console.error));
+    }
   }
 
   await Promise.all(tasks);

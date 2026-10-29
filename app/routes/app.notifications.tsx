@@ -21,7 +21,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { authenticate } from "../shopify.server";
 import { PlanGate } from "../components/PlanGate";
 import prisma from "../db.server";
-import { getCachedPlan } from "../services/plan.server";
+import { getCachedPlan, getLimits } from "../services/plan.server";
 import { sendEmail } from "../services/notify.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -60,6 +60,18 @@ export async function action({ request }: ActionFunctionArgs) {
 
   if (flowWebhookUrl && !flowWebhookUrl.startsWith("https://")) {
     return json({ error: "Flow webhook URL must start with https://" }, { status: 400 });
+  }
+
+  // PlanGate only hides the field. Clearing the URL stays allowed on any plan
+  // so a downgraded shop can still tidy up its own settings.
+  if (flowWebhookUrl) {
+    const limits = getLimits(await getCachedPlan(session.shop));
+    if (!limits.flowWebhookEnabled) {
+      return json(
+        { error: "The Flow / automation webhook is available on Pro and Premium plans.", planError: true },
+        { status: 403 }
+      );
+    }
   }
 
   await prisma.notificationSetting.upsert({
