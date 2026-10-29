@@ -12,7 +12,6 @@ import {
   Banner,
   Divider,
   IndexTable,
-  Thumbnail,
   Badge,
   TextField,
   useIndexResourceState,
@@ -22,13 +21,14 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import { useState, useCallback, type KeyboardEvent } from "react";
 import { authenticate } from "../shopify.server";
 import { COLLECTIONS_LIST, COLLECTION_DELETE } from "../graphql/mutations";
+import { CollectionThumbnail } from "../components/CollectionThumbnail";
 
 interface ShopifyCollection {
   id: string;
   title: string;
   handle: string;
   updatedAt: string;
-  image: { src: string; altText: string | null } | null;
+  image: { url: string; altText: string | null } | null;
   productsCount: { count: number };
   ruleSet: { rules: unknown[] } | null;
 }
@@ -166,11 +166,7 @@ export default function CollectionsPage() {
                     position={index}
                   >
                     <IndexTable.Cell>
-                      <Thumbnail
-                        source={c.image?.src ?? ""}
-                        alt={c.image?.altText ?? c.title}
-                        size="small"
-                      />
+                      <CollectionThumbnail image={c.image} title={c.title} handle={c.handle} />
                     </IndexTable.Cell>
                     <IndexTable.Cell>
                       <Text as="span" fontWeight="semibold">{c.title}</Text>

@@ -149,7 +149,7 @@ export const COLLECTIONS_LIST = `#graphql
           title
           handle
           updatedAt
-          image { src altText }
+          image { url altText }
           productsCount { count }
           ruleSet { rules { column relation condition } }
           seo { title description }

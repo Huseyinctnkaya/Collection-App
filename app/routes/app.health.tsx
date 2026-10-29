@@ -11,7 +11,6 @@ import {
   Badge,
   Banner,
   DataTable,
-  Thumbnail,
   ProgressBar,
   Divider,
 } from "@shopify/polaris";
@@ -19,6 +18,7 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import { authenticate } from "../shopify.server";
 import { PlanGate } from "../components/PlanGate";
+import { CollectionThumbnail } from "../components/CollectionThumbnail";
 import { COLLECTIONS_LIST } from "../graphql/mutations";
 import { getCachedPlan } from "../services/plan.server";
 
@@ -27,7 +27,7 @@ interface CollectionNode {
   title: string;
   handle: string;
   updatedAt: string;
-  image: { src: string; altText: string | null } | null;
+  image: { url: string; altText: string | null } | null;
   productsCount: { count: number };
   ruleSet: { rules: unknown[] } | null;
   seo: { title: string | null; description: string | null } | null;
@@ -159,10 +159,10 @@ export default function HealthPage() {
 
   const rows = results.filter((r): r is NonNullable<typeof r> => r !== null).map((r) => [
     <InlineStack key={r.collection.id} gap="200" blockAlign="center">
-      <Thumbnail
-        source={r.collection.image?.src ?? ""}
-        alt={r.collection.image?.altText ?? r.collection.title}
-        size="small"
+      <CollectionThumbnail
+        image={r.collection.image}
+        title={r.collection.title}
+        handle={r.collection.handle}
       />
       <Text as="span" fontWeight="semibold">{r.collection.title}</Text>
     </InlineStack>,
