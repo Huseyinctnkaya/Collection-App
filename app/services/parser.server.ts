@@ -1,6 +1,9 @@
 import { parse as csvParse } from "csv-parse/sync";
 import ExcelJS from "exceljs";
 import { z } from "zod";
+import { extractMetafields } from "./metafield-columns";
+
+export { extractMetafields };
 
 export const CollectionRowSchema = z.object({
   title: z.string().min(1, "Title is required"),
@@ -61,20 +64,6 @@ function normalizeHeader(h: string): string {
   // Preserve metafield dot notation: metafield.namespace.key or metafield.namespace.key.type
   if (lower.startsWith("metafield.")) return lower;
   return lower.replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
-}
-
-export function extractMetafields(
-  rawRow: Record<string, string>
-): Array<{ namespace: string; key: string; type: string; value: string }> {
-  const result: Array<{ namespace: string; key: string; type: string; value: string }> = [];
-  for (const [col, value] of Object.entries(rawRow)) {
-    if (!col.startsWith("metafield.") || !value) continue;
-    const parts = col.split(".");
-    if (parts.length < 3) continue;
-    const [, namespace, key, type = "single_line_text_field"] = parts;
-    result.push({ namespace, key, type, value });
-  }
-  return result;
 }
 
 function normalizeHeaders(headers: string[], columnMap?: Record<string, string>): string[] {

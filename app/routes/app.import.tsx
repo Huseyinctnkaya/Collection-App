@@ -98,16 +98,20 @@ export async function action({ request }: ActionFunctionArgs) {
   if (contentType.includes("application/x-www-form-urlencoded")) {
     const formData = await request.formData();
     if (formData.get("intent") === "sheets") {
-      const overQuota = await quotaResponse();
-      if (overQuota) return overQuota;
-
       if (!limits.googleSheetsEnabled) {
         return json({ error: "Google Sheets import is not available on the Free plan. Upgrade to Pro or Premium.", planError: true }, { status: 403 });
       }
 
       const sheetsUrl = (formData.get("sheetsUrl") as string)?.trim();
       const duplicateStrategy = (formData.get("duplicateStrategy") as string) === "overwrite" ? "overwrite" : "skip";
+      const isDryRun = formData.get("dryRun") === "true";
+      const templateId = (formData.get("templateId") as string) || null;
       if (!sheetsUrl) return json({ error: "Google Sheets URL is required" }, { status: 400 });
+
+      if (!isDryRun) {
+        const overQuota = await quotaResponse();
+        if (overQuota) return overQuota;
+      }
 
       let buffer: Buffer;
       try {
@@ -116,7 +120,7 @@ export async function action({ request }: ActionFunctionArgs) {
         return json({ error: err instanceof Error ? err.message : "Failed to fetch sheet" }, { status: 422 });
       }
 
-      return startImportFromBuffer({ buffer, fileName: "google-sheet.csv", ext: "csv", session, admin, duplicateStrategy, isDryRun: false, templateId: null, limits });
+      return startImportFromBuffer({ buffer, fileName: "google-sheet.csv", ext: "csv", session, admin, duplicateStrategy, isDryRun, templateId, limits });
     }
   }
 
@@ -238,6 +242,84 @@ async function scheduleImport({
   return json({ scheduled: scheduled.id, scheduledAt: scheduledDate.toISOString(), recurrence });
 }
 
+/**
+ * Build the preview for a dry run.
+ *
+ * Runs the same planImport the real import does, so what the merchant is shown
+ * and what the import then does cannot drift apart.
+ */
+async function dryRunPreview({
+  parseResult,
+  admin,
+  duplicateStrategy,
+}: {
+  parseResult: Awaited<ReturnType<typeof parseFile>>;
+  admin: Parameters<typeof runImport>[0]["admin"];
+  duplicateStrategy: "skip" | "overwrite";
+}) {
+  // A preview that only parses the file tells the merchant nothing about what
+  // the import will do. Resolving existing collections here is what makes
+  // "will create" / "will update" / "will skip" real, and it surfaces
+  // problems like an ambiguous title before anything is written.
+  const planRows: PlanRow[] = parseResult.rows
+    .filter((r) => r.data !== null)
+    .map((r) => ({ row: r.row, data: r.data!, metafields: extractMetafields(r.rawRow) }));
+
+  let actionByRow = new Map<number, string>();
+  let planErrorsByRow = new Map<number, string>();
+  let lookupError: string | null = null;
+
+  try {
+    const index = await fetchExistingIndex(admin, planRows);
+    const plan = planImport({
+      rows: planRows,
+      index,
+      duplicateStrategy,
+      columns: new Set(parseResult.rows.flatMap((r) => Object.keys(r.rawRow))),
+    });
+    actionByRow = new Map([
+      ...plan.creates.map((p) => [p.row, "create"] as const),
+      ...plan.updates.map((p) => [p.row, "update"] as const),
+      ...plan.skipped.map((p) => [p.row, "skip"] as const),
+    ]);
+    planErrorsByRow = new Map(plan.failed.map((f) => [f.row, f.message] as const));
+  } catch (err) {
+    lookupError = err instanceof Error ? err.message : "Unknown error";
+  }
+
+  const matchedRows = [...actionByRow.values()];
+
+  return json({
+    dryRun: true,
+    totalRows: parseResult.totalRows,
+    validRows: parseResult.validRows,
+    errorRows: parseResult.errorRows,
+    lookupError,
+    willCreate: matchedRows.filter((a) => a === "create").length,
+    willUpdate: matchedRows.filter((a) => a === "update").length,
+    willSkip: matchedRows.filter((a) => a === "skip").length,
+    metafieldColumns: [
+      ...new Set(parseResult.rows.flatMap((r) => Object.keys(r.rawRow)).filter((c) => c.startsWith("metafield."))),
+    ],
+    preview: parseResult.rows.slice(0, 24).map((r) => ({
+      row: r.row,
+      valid: r.errors.length === 0,
+      title: r.data?.title ?? "—",
+      handle: r.data?.handle ?? "",
+      action: actionByRow.get(r.row) ?? null,
+      planError: planErrorsByRow.get(r.row) ?? null,
+      metafieldCount: r.data ? extractMetafields(r.rawRow).length : 0,
+      type: r.data?.rules ? "smart" : "manual",
+      rules: r.data?.rules ?? "",
+      products: r.data?.products ?? "",
+      sortOrder: r.data?.sort_order ?? "manual",
+      imageUrl: r.data?.image_url ?? "",
+      description: r.data?.description ?? "",
+      errors: r.errors,
+    })),
+  });
+}
+
 async function startImportFromBuffer({
   buffer,
   fileName,
@@ -280,6 +362,13 @@ async function startImportFromBuffer({
     }, { status: 403 });
   }
 
+  // A preview must not create an ImportJob. The monthly quota counts job rows,
+  // so previewing used to spend an import without importing anything — on the
+  // Free plan two previews locked the merchant out entirely.
+  if (isDryRun) {
+    return dryRunPreview({ parseResult, admin, duplicateStrategy });
+  }
+
   const job = await prisma.importJob.create({
     data: {
       shop: session.shop,
@@ -305,70 +394,6 @@ async function startImportFromBuffer({
   }
 
   const useBulk = parseResult.validRows > BULK_THRESHOLD;
-
-  if (isDryRun) {
-    // A preview that only parses the file tells the merchant nothing about what
-    // the import will do. Resolving existing collections here is what makes
-    // "will create" / "will update" / "will skip" real, and it surfaces
-    // problems like an ambiguous title before anything is written.
-    const planRows: PlanRow[] = parseResult.rows
-      .filter((r) => r.data !== null)
-      .map((r) => ({ row: r.row, data: r.data!, metafields: extractMetafields(r.rawRow) }));
-
-    let actionByRow = new Map<number, string>();
-    let planErrorsByRow = new Map<number, string>();
-    let lookupError: string | null = null;
-
-    try {
-      const index = await fetchExistingIndex(admin, planRows);
-      const plan = planImport({
-        rows: planRows,
-        index,
-        duplicateStrategy,
-        columns: new Set(parseResult.rows.flatMap((r) => Object.keys(r.rawRow))),
-      });
-      actionByRow = new Map([
-        ...plan.creates.map((p) => [p.row, "create"] as const),
-        ...plan.updates.map((p) => [p.row, "update"] as const),
-        ...plan.skipped.map((p) => [p.row, "skip"] as const),
-      ]);
-      planErrorsByRow = new Map(plan.failed.map((f) => [f.row, f.message] as const));
-    } catch (err) {
-      lookupError = err instanceof Error ? err.message : "Unknown error";
-    }
-
-    const matchedRows = [...actionByRow.values()];
-
-    return json({
-      dryRun: true,
-      totalRows: parseResult.totalRows,
-      validRows: parseResult.validRows,
-      errorRows: parseResult.errorRows,
-      lookupError,
-      willCreate: matchedRows.filter((a) => a === "create").length,
-      willUpdate: matchedRows.filter((a) => a === "update").length,
-      willSkip: matchedRows.filter((a) => a === "skip").length,
-      metafieldColumns: [
-        ...new Set(parseResult.rows.flatMap((r) => Object.keys(r.rawRow)).filter((c) => c.startsWith("metafield."))),
-      ],
-      preview: parseResult.rows.slice(0, 24).map((r) => ({
-        row: r.row,
-        valid: r.errors.length === 0,
-        title: r.data?.title ?? "—",
-        handle: r.data?.handle ?? "",
-        action: actionByRow.get(r.row) ?? null,
-        planError: planErrorsByRow.get(r.row) ?? null,
-        metafieldCount: r.data ? extractMetafields(r.rawRow).length : 0,
-        type: r.data?.rules ? "smart" : "manual",
-        rules: r.data?.rules ?? "",
-        products: r.data?.products ?? "",
-        sortOrder: r.data?.sort_order ?? "manual",
-        imageUrl: r.data?.image_url ?? "",
-        description: r.data?.description ?? "",
-        errors: r.errors,
-      })),
-    });
-  }
 
   runImport({
     jobId: job.id,
@@ -427,6 +452,16 @@ export default function ImportPage() {
     }, 3000);
     return () => clearInterval(timer);
   }, [activeJobId, isJobRunning, revalidate]);
+
+  const submitSheet = useCallback((dryRun: boolean) => {
+    const fd = new FormData();
+    fd.append("intent", "sheets");
+    fd.append("sheetsUrl", sheetsUrl.trim());
+    fd.append("duplicateStrategy", duplicateStrategy);
+    if (dryRun) fd.append("dryRun", "true");
+    if (templateId) fd.append("templateId", templateId);
+    submit(fd, { method: "post" });
+  }, [sheetsUrl, duplicateStrategy, templateId, submit]);
 
   const handleScheduleDrop = useCallback((_: File[], accepted: File[]) => {
     setScheduleFile(accepted[0] ?? null);
@@ -808,20 +843,32 @@ export default function ImportPage() {
                 value={duplicateStrategy}
                 onChange={(v) => setDuplicateStrategy(v as "skip" | "overwrite")}
               />
+              {templates.length > 0 && (
+                <Select
+                  label="Column template"
+                  options={[
+                    { label: "None \u2014 use the standard column names", value: "" },
+                    ...templates.map((t) => ({ label: t.name, value: t.id })),
+                  ]}
+                  value={templateId}
+                  onChange={setTemplateId}
+                  helpText="Remaps the sheet's column names, same as for an uploaded file"
+                />
+              )}
               <InlineStack gap="200">
                 <Button
                   variant="primary"
                   disabled={!sheetsUrl.trim() || isSubmitting}
                   loading={isSubmitting}
-                  onClick={() => {
-                    const fd = new FormData();
-                    fd.append("intent", "sheets");
-                    fd.append("sheetsUrl", sheetsUrl.trim());
-                    fd.append("duplicateStrategy", duplicateStrategy);
-                    submit(fd, { method: "post" });
-                  }}
+                  onClick={() => submitSheet(false)}
                 >
                   Import from Sheet
+                </Button>
+                <Button
+                  disabled={!sheetsUrl.trim() || isSubmitting}
+                  onClick={() => submitSheet(true)}
+                >
+                  Preview
                 </Button>
                 {sheetsUrl && (
                   <Button variant="plain" onClick={() => setSheetsUrl("")}>Clear</Button>
