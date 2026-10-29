@@ -29,6 +29,7 @@ import { fetchExistingIndex } from "../services/collection-index.server";
 import { planImport, matchExisting, type PlanRow } from "../services/import-plan.server";
 import { fetchGoogleSheetAsCSV } from "../services/sheets.server";
 import { getCachedPlan, getLimits, getMonthlyImportCount } from "../services/plan.server";
+import type { PlanLimits } from "../services/plan.shared";
 import { PlanGate } from "../components/PlanGate";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -37,7 +38,7 @@ const BULK_THRESHOLD = 50;
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
 
-  const [recentJobs, templates, currentPlan, monthlyImportCount] = await Promise.all([
+  const [recentJobs, templates, currentPlan, monthlyImportCount, scheduled] = await Promise.all([
     prisma.importJob.findMany({
       where: { shop: session.shop },
       orderBy: { createdAt: "desc" },
@@ -51,10 +52,24 @@ export async function loader({ request }: LoaderFunctionArgs) {
     }),
     getCachedPlan(session.shop),
     getMonthlyImportCount(session.shop),
+    prisma.scheduledImport.findMany({
+      where: { shop: session.shop },
+      orderBy: { scheduledAt: "asc" },
+      take: 20,
+      // fileData holds the whole uploaded spreadsheet; never send it to the browser.
+      select: {
+        id: true,
+        fileName: true,
+        scheduledAt: true,
+        status: true,
+        recurrence: true,
+        duplicateStrategy: true,
+      },
+    }),
   ]);
 
   const limits = getLimits(currentPlan);
-  return json({ recentJobs, templates, currentPlan, limits, monthlyImportCount });
+  return json({ recentJobs, templates, currentPlan, limits, monthlyImportCount, scheduled });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -63,16 +78,19 @@ export async function action({ request }: ActionFunctionArgs) {
   const plan = await getCachedPlan(session.shop);
   const limits = getLimits(plan);
 
-  // Monthly import quota check (skip for dry runs)
-  if (limits.maxImportsPerMonth !== -1) {
+  // Only actually running an import spends the monthly quota. Scheduling one
+  // for later and cancelling a scheduled one must stay possible with the quota
+  // spent, otherwise a merchant who hits the limit cannot even clear their
+  // own queue.
+  const quotaResponse = async () => {
+    if (limits.maxImportsPerMonth === -1) return null;
     const count = await getMonthlyImportCount(session.shop);
-    if (count >= limits.maxImportsPerMonth) {
-      return json({
-        error: `You've reached your monthly import limit (${limits.maxImportsPerMonth} imports). Upgrade your plan to import more.`,
-        planError: true,
-      }, { status: 403 });
-    }
-  }
+    if (count < limits.maxImportsPerMonth) return null;
+    return json({
+      error: `You've reached your monthly import limit (${limits.maxImportsPerMonth} imports). Upgrade your plan to import more.`,
+      planError: true,
+    }, { status: 403 });
+  };
 
   const contentType = request.headers.get("content-type") ?? "";
 
@@ -80,6 +98,9 @@ export async function action({ request }: ActionFunctionArgs) {
   if (contentType.includes("application/x-www-form-urlencoded")) {
     const formData = await request.formData();
     if (formData.get("intent") === "sheets") {
+      const overQuota = await quotaResponse();
+      if (overQuota) return overQuota;
+
       if (!limits.googleSheetsEnabled) {
         return json({ error: "Google Sheets import is not available on the Free plan. Upgrade to Pro or Premium.", planError: true }, { status: 403 });
       }
@@ -103,6 +124,23 @@ export async function action({ request }: ActionFunctionArgs) {
   const uploadHandler = unstable_createMemoryUploadHandler({ maxPartSize: MAX_FILE_SIZE });
   const formData = await unstable_parseMultipartFormData(request, uploadHandler);
 
+  const intent = formData.get("intent") as string | null;
+
+  if (intent === "cancel-schedule") {
+    const id = formData.get("id") as string;
+    await prisma.scheduledImport.deleteMany({
+      where: { id, shop: session.shop, status: "PENDING" },
+    });
+    return json({ scheduleCancelled: true });
+  }
+
+  if (intent === "schedule") {
+    return scheduleImport({ formData, shop: session.shop, limits });
+  }
+
+  const overQuota = await quotaResponse();
+  if (overQuota) return overQuota;
+
   const file = formData.get("file") as File | null;
   const duplicateStrategy = (formData.get("duplicateStrategy") as string) === "overwrite" ? "overwrite" : "skip";
   const isDryRun = formData.get("dryRun") === "true";
@@ -120,6 +158,84 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const buffer = Buffer.from(await file.arrayBuffer());
   return startImportFromBuffer({ buffer, fileName: file.name, ext: ext as "csv" | "xlsx", session, admin, duplicateStrategy, isDryRun, templateId, limits });
+}
+
+/**
+ * Store a file to be imported at a future time.
+ *
+ * The plan's scheduled-import allowance is enforced here rather than only in
+ * the UI: PlanGate hides the form, but nothing stopped a direct POST, and the
+ * Free plan's allowance is zero.
+ */
+async function scheduleImport({
+  formData,
+  shop,
+  limits,
+}: {
+  formData: FormData;
+  shop: string;
+  limits: PlanLimits;
+}) {
+  if (limits.maxScheduledImports === 0) {
+    return json(
+      { error: "Scheduled imports are not available on the Free plan. Upgrade to Pro or Premium.", planError: true },
+      { status: 403 }
+    );
+  }
+
+  if (limits.maxScheduledImports !== -1) {
+    const pending = await prisma.scheduledImport.count({ where: { shop, status: "PENDING" } });
+    if (pending >= limits.maxScheduledImports) {
+      return json(
+        {
+          error: `You already have ${pending} scheduled imports, the most your plan allows. Cancel one or upgrade your plan.`,
+          planError: true,
+        },
+        { status: 403 }
+      );
+    }
+  }
+
+  const file = formData.get("file") as File | null;
+  const scheduledAt = formData.get("scheduledAt") as string;
+  const duplicateStrategy = formData.get("duplicateStrategy") === "overwrite" ? "overwrite" : "skip";
+  const recurrence = (["daily", "weekly", "monthly"].includes(formData.get("recurrence") as string)
+    ? formData.get("recurrence")
+    : "none") as string;
+
+  if (!file) return json({ error: "No file provided" }, { status: 400 });
+  if (!scheduledAt) return json({ error: "No scheduled time provided" }, { status: 400 });
+
+  const scheduledDate = new Date(scheduledAt);
+  if (Number.isNaN(scheduledDate.getTime())) {
+    return json({ error: "Could not read the scheduled time" }, { status: 400 });
+  }
+  if (scheduledDate <= new Date()) {
+    return json({ error: "Scheduled time must be in the future" }, { status: 400 });
+  }
+
+  const ext = file.name.split(".").pop()?.toLowerCase();
+  if (ext !== "csv" && ext !== "xlsx") {
+    return json({ error: "Only CSV and XLSX files are supported" }, { status: 400 });
+  }
+  if (ext === "xlsx" && !limits.allowedFileTypes.includes("xlsx")) {
+    return json({ error: "Excel (.xlsx) files are not available on the Free plan. Upgrade to Pro or Premium.", planError: true }, { status: 403 });
+  }
+
+  const scheduled = await prisma.scheduledImport.create({
+    data: {
+      shop,
+      scheduledAt: scheduledDate,
+      fileName: file.name,
+      fileData: Buffer.from(await file.arrayBuffer()),
+      fileType: ext,
+      duplicateStrategy,
+      recurrence,
+      nextRunAt: recurrence !== "none" ? scheduledDate : null,
+    },
+  });
+
+  return json({ scheduled: scheduled.id, scheduledAt: scheduledDate.toISOString(), recurrence });
 }
 
 async function startImportFromBuffer({
@@ -141,7 +257,7 @@ async function startImportFromBuffer({
   duplicateStrategy: "skip" | "overwrite";
   isDryRun: boolean;
   templateId: string | null;
-  limits: import("../services/plan.shared").PlanLimits;
+  limits: PlanLimits;
 }) {
   let columnMap: Record<string, string> | undefined;
   if (templateId) {
@@ -276,7 +392,7 @@ async function startImportFromBuffer({
 }
 
 export default function ImportPage() {
-  const { recentJobs, templates, currentPlan, limits, monthlyImportCount } = useLoaderData<typeof loader>();
+  const { recentJobs, templates, currentPlan, limits, monthlyImportCount, scheduled } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const submit = useSubmit();
@@ -286,6 +402,10 @@ export default function ImportPage() {
   const [duplicateStrategy, setDuplicateStrategy] = useState<"skip" | "overwrite">("skip");
   const [templateId, setTemplateId] = useState("");
   const [sheetsUrl, setSheetsUrl] = useState("");
+  const pendingScheduleCount = scheduled.filter((sch) => sch.status === "PENDING").length;
+  const [scheduleFile, setScheduleFile] = useState<File | null>(null);
+  const [scheduledAt, setScheduledAt] = useState("");
+  const [recurrence, setRecurrence] = useState("none");
   const isSubmitting = navigation.state === "submitting";
 
   const activeJobId =
@@ -308,6 +428,28 @@ export default function ImportPage() {
     return () => clearInterval(timer);
   }, [activeJobId, isJobRunning, revalidate]);
 
+  const handleScheduleDrop = useCallback((_: File[], accepted: File[]) => {
+    setScheduleFile(accepted[0] ?? null);
+  }, []);
+
+  const handleSchedule = useCallback(() => {
+    if (!scheduleFile || !scheduledAt) return;
+    const fd = new FormData();
+    fd.append("intent", "schedule");
+    fd.append("file", scheduleFile);
+    fd.append("scheduledAt", scheduledAt);
+    fd.append("duplicateStrategy", duplicateStrategy);
+    fd.append("recurrence", recurrence);
+    submit(fd, { method: "post", encType: "multipart/form-data" });
+  }, [scheduleFile, scheduledAt, duplicateStrategy, recurrence, submit]);
+
+  const handleCancelSchedule = useCallback((id: string) => {
+    const fd = new FormData();
+    fd.append("intent", "cancel-schedule");
+    fd.append("id", id);
+    submit(fd, { method: "post", encType: "multipart/form-data" });
+  }, [submit]);
+
   const handleDrop = useCallback((_: File[], acceptedFiles: File[]) => {
     setFile(acceptedFiles[0] ?? null);
   }, []);
@@ -321,6 +463,9 @@ export default function ImportPage() {
     if (templateId) fd.append("templateId", templateId);
     submit(fd, { method: "post", encType: "multipart/form-data" });
   }, [file, duplicateStrategy, templateId, submit]);
+
+  const scheduleStatusTone = (status: string): "success" | "critical" | "info" =>
+    status === "COMPLETED" ? "success" : status === "FAILED" ? "critical" : "info";
 
   const statusBadge = (status: string) => {
     const map: Record<string, "success" | "warning" | "critical" | "info"> = {
@@ -684,6 +829,111 @@ export default function ImportPage() {
               </InlineStack>
             </BlockStack>
           </Card>
+          </PlanGate>
+        </Layout.Section>
+
+        {/* Scheduled imports — same page as the rest of the import flows */}
+        <Layout.Section>
+          <PlanGate
+            currentPlan={currentPlan}
+            requiredPlan="pro"
+            featureName="Scheduled Imports"
+            description="Upload a file now and have it imported at a future time, once or on a repeat. Available on Pro and Premium plans."
+          >
+            <BlockStack gap="500">
+              <Card>
+                <BlockStack gap="400">
+                  <InlineStack align="space-between" blockAlign="center">
+                    <Text variant="headingMd" as="h2">Schedule for later</Text>
+                    {limits.maxScheduledImports !== -1 && (
+                      <Badge tone="info">{`${pendingScheduleCount} / ${limits.maxScheduledImports} active`}</Badge>
+                    )}
+                  </InlineStack>
+                  <Divider />
+
+                  <DropZone accept=".csv,.xlsx" type="file" allowMultiple={false} onDrop={handleScheduleDrop}>
+                    {scheduleFile
+                      ? <DropZone.FileUpload actionTitle={scheduleFile.name} actionHint="File ready" />
+                      : <DropZone.FileUpload actionTitle="Add CSV or XLSX" actionHint="or drag and drop" />}
+                  </DropZone>
+
+                  <BlockStack gap="200">
+                    <Text as="p" variant="bodyMd" fontWeight="medium">Run at (your local time)</Text>
+                    <input
+                      type="datetime-local"
+                      aria-label="Scheduled run time"
+                      value={scheduledAt}
+                      onChange={(e) => setScheduledAt(e.target.value)}
+                      style={{
+                        padding: "8px 12px",
+                        border: "1px solid #c9cccf",
+                        borderRadius: 8,
+                        fontSize: 14,
+                        width: "100%",
+                        maxWidth: 320,
+                      }}
+                    />
+                  </BlockStack>
+
+                  <Select
+                    label="Repeat"
+                    options={[
+                      { label: "No repeat (one-time)", value: "none" },
+                      { label: "Daily", value: "daily" },
+                      { label: "Weekly", value: "weekly" },
+                      { label: "Monthly", value: "monthly" },
+                    ]}
+                    value={recurrence}
+                    onChange={setRecurrence}
+                    helpText="Recurring imports re-run automatically using the same file"
+                  />
+
+                  <Text as="p" tone="subdued" variant="bodySm">
+                    {`Uses the "If collection already exists" setting above: ${duplicateStrategy === "overwrite" ? "Overwrite (update existing)" : "Skip (keep existing)"}.`}
+                  </Text>
+
+                  {"scheduled" in (actionData ?? {}) && (
+                    <Banner tone="success">
+                      <p>Import scheduled for {new Date((actionData as { scheduledAt: string }).scheduledAt).toLocaleString()}</p>
+                    </Banner>
+                  )}
+
+                  <Button
+                    variant="primary"
+                    disabled={!scheduleFile || !scheduledAt || isSubmitting}
+                    loading={isSubmitting}
+                    onClick={handleSchedule}
+                  >
+                    Schedule import
+                  </Button>
+                </BlockStack>
+              </Card>
+
+              <Card>
+                <BlockStack gap="400">
+                  <Text variant="headingMd" as="h2">Scheduled imports</Text>
+                  <Divider />
+                  {scheduled.length === 0 ? (
+                    <Text as="p" tone="subdued">No scheduled imports.</Text>
+                  ) : (
+                    <DataTable
+                      columnContentTypes={["text", "text", "text", "text", "text", "text"]}
+                      headings={["File", "Scheduled for", "Status", "Repeat", "Strategy", ""]}
+                      rows={scheduled.map((sch) => [
+                        sch.fileName,
+                        new Date(sch.scheduledAt).toLocaleString(),
+                        <Badge tone={scheduleStatusTone(sch.status)} key={sch.id}>{sch.status}</Badge>,
+                        sch.recurrence !== "none" ? <Badge key={`r-${sch.id}`}>{sch.recurrence}</Badge> : "—",
+                        sch.duplicateStrategy,
+                        sch.status === "PENDING"
+                          ? <Button variant="plain" tone="critical" onClick={() => handleCancelSchedule(sch.id)} key={sch.id}>Cancel</Button>
+                          : "—",
+                      ])}
+                    />
+                  )}
+                </BlockStack>
+              </Card>
+            </BlockStack>
           </PlanGate>
         </Layout.Section>
 

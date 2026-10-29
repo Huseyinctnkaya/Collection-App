@@ -50,7 +50,7 @@ const QUICK_ACTIONS = [
     icon: ClockIcon,
     title: "Schedule Import",
     desc: "Upload a file now and run the import at a future time",
-    url: "/app/schedule",
+    url: "/app/import",
     primary: false,
   },
   {
