@@ -50,7 +50,6 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   const email = (formData.get("email") as string) || null;
-  const slackWebhookUrl = (formData.get("slackWebhookUrl") as string) || null;
   const flowWebhookUrl = (formData.get("flowWebhookUrl") as string) || null;
   const notifyOnComplete = formData.get("notifyOnComplete") === "true";
   const notifyOnFail = formData.get("notifyOnFail") === "true";
@@ -59,18 +58,14 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ error: "Invalid email address" }, { status: 400 });
   }
 
-  if (slackWebhookUrl && !slackWebhookUrl.startsWith("https://hooks.slack.com/")) {
-    return json({ error: "Slack webhook URL must start with https://hooks.slack.com/" }, { status: 400 });
-  }
-
   if (flowWebhookUrl && !flowWebhookUrl.startsWith("https://")) {
     return json({ error: "Flow webhook URL must start with https://" }, { status: 400 });
   }
 
   await prisma.notificationSetting.upsert({
     where: { shop: session.shop },
-    create: { shop: session.shop, email, slackWebhookUrl, flowWebhookUrl, notifyOnComplete, notifyOnFail },
-    update: { email, slackWebhookUrl, flowWebhookUrl, notifyOnComplete, notifyOnFail },
+    create: { shop: session.shop, email, flowWebhookUrl, notifyOnComplete, notifyOnFail },
+    update: { email, flowWebhookUrl, notifyOnComplete, notifyOnFail },
   });
 
   return json({ saved: true });
@@ -85,13 +80,11 @@ export default function NotificationsPage() {
   const formRef = useRef<HTMLFormElement>(null);
 
   const initialEmail = settings?.email ?? "";
-  const initialSlack = settings?.slackWebhookUrl ?? "";
   const initialFlow = settings?.flowWebhookUrl ?? "";
   const initialNotifyOnComplete = settings?.notifyOnComplete ?? true;
   const initialNotifyOnFail = settings?.notifyOnFail ?? true;
 
   const [email, setEmail] = useState(initialEmail);
-  const [slackWebhookUrl, setSlackWebhookUrl] = useState(initialSlack);
   const [flowWebhookUrl, setFlowWebhookUrl] = useState(initialFlow);
   const [notifyOnComplete, setNotifyOnComplete] = useState(initialNotifyOnComplete);
   const [notifyOnFail, setNotifyOnFail] = useState(initialNotifyOnFail);
@@ -106,12 +99,11 @@ export default function NotificationsPage() {
 
   const handleDiscard = useCallback(() => {
     setEmail(initialEmail);
-    setSlackWebhookUrl(initialSlack);
     setFlowWebhookUrl(initialFlow);
     setNotifyOnComplete(initialNotifyOnComplete);
     setNotifyOnFail(initialNotifyOnFail);
     shopify.saveBar.hide("notifications-save-bar");
-  }, [initialEmail, initialSlack, initialFlow, initialNotifyOnComplete, initialNotifyOnFail, shopify]);
+  }, [initialEmail, initialFlow, initialNotifyOnComplete, initialNotifyOnFail, shopify]);
 
   const handleNotifyOnComplete = useCallback((v: boolean) => { setNotifyOnComplete(v); markDirty(); }, [markDirty]);
   const handleNotifyOnFail = useCallback((v: boolean) => { setNotifyOnFail(v); markDirty(); }, [markDirty]);
@@ -158,25 +150,6 @@ export default function NotificationsPage() {
                     onChange={(v) => { setEmail(v); markDirty(); }}
                     helpText="Leave blank to disable email notifications"
                     autoComplete="email"
-                  />
-                </BlockStack>
-              </Card>
-
-              <Card>
-                <BlockStack gap="400">
-                  <InlineStack align="space-between" blockAlign="center">
-                    <Text as="h2" variant="headingMd">Slack Notifications</Text>
-                    <Badge tone="info">Incoming Webhook</Badge>
-                  </InlineStack>
-                  <Divider />
-                  <TextField
-                    label="Slack webhook URL"
-                    name="slackWebhookUrl"
-                    value={slackWebhookUrl}
-                    onChange={(v) => { setSlackWebhookUrl(v); markDirty(); }}
-                    placeholder="https://hooks.slack.com/services/..."
-                    helpText="Create an Incoming Webhook in your Slack workspace settings"
-                    autoComplete="off"
                   />
                 </BlockStack>
               </Card>
@@ -251,15 +224,6 @@ export default function NotificationsPage() {
                 {"tested" in (actionData ?? {}) && (
                   <Banner tone="success"><p>Test email sent!</p></Banner>
                 )}
-              </BlockStack>
-            </Card>
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">Slack Setup</Text>
-                <Divider />
-                <Text as="p" tone="subdued" variant="bodySm">
-                  Go to your Slack workspace → Settings → Integrations → Incoming Webhooks → Add New Webhook.
-                </Text>
               </BlockStack>
             </Card>
           </BlockStack>

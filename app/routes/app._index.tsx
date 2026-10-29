@@ -56,7 +56,7 @@ const QUICK_ACTIONS = [
   {
     icon: NotificationIcon,
     title: "Notifications",
-    desc: "Get notified via email or Slack when an import finishes",
+    desc: "Get notified by email when an import finishes",
     url: "/app/notifications",
     primary: false,
   },

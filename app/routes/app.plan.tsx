@@ -41,7 +41,7 @@ const PLAN_FEATURES: Record<PlanName, string[]> = {
     "Bulk operations",
     "Rollback imports",
     "Collection Health Checker",
-    "Email + Slack notifications",
+    "Email notifications",
     "Shopify Flow webhook",
     "Priority email support",
   ],

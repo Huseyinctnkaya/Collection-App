@@ -24,14 +24,6 @@ function buildMessage(job: JobSummary, shop: string) {
   return { title, body };
 }
 
-async function sendSlack(webhookUrl: string, title: string, body: string) {
-  await fetch(webhookUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text: `*${title}*\n${body}` }),
-  });
-}
-
 async function triggerFlowWebhook(webhookUrl: string, job: JobSummary, shop: string) {
   await fetch(webhookUrl, {
     method: "POST",
@@ -84,10 +76,6 @@ export async function notifyImportFinished(shop: string, job: JobSummary) {
   const { title, body } = buildMessage(job, shop);
 
   const tasks: Promise<unknown>[] = [];
-
-  if (settings.slackWebhookUrl) {
-    tasks.push(sendSlack(settings.slackWebhookUrl, title, body).catch(console.error));
-  }
 
   if (settings.email) {
     tasks.push(sendEmail(settings.email, title, body).catch(console.error));
