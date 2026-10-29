@@ -19,14 +19,20 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import crypto from "node:crypto";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { getCachedPlan, getLimits } from "../services/plan.server";
+import { PlanGate } from "../components/PlanGate";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
-  const record = await prisma.importWebhookKey.findUnique({ where: { shop: session.shop } });
+  const [record, currentPlan] = await Promise.all([
+    prisma.importWebhookKey.findUnique({ where: { shop: session.shop } }),
+    getCachedPlan(session.shop),
+  ]);
   return json({
     hasKey: !!record,
     lastUsed: record?.lastUsed?.toISOString() ?? null,
     createdAt: record?.createdAt?.toISOString() ?? null,
+    currentPlan,
   });
 }
 
@@ -36,6 +42,16 @@ export async function action({ request }: ActionFunctionArgs) {
   const intent = formData.get("intent") as string;
 
   if (intent === "generate") {
+    // PlanGate only hides the button; issuing a key is what actually grants
+    // access to the import API, so the plan is checked here too.
+    const limits = getLimits(await getCachedPlan(session.shop));
+    if (!limits.externalWebhookEnabled) {
+      return json(
+        { error: "The external webhook API is available on the Premium plan.", planError: true },
+        { status: 403 }
+      );
+    }
+
     const rawKey = crypto.randomBytes(32).toString("hex"); // 64-char hex
     const keyHash = crypto.createHash("sha256").update(rawKey).digest("hex");
 
@@ -57,7 +73,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function IntegrationsPage() {
-  const { hasKey, lastUsed, createdAt } = useLoaderData<typeof loader>();
+  const { hasKey, lastUsed, createdAt, currentPlan } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const isBusy = navigation.state === "submitting";
@@ -77,6 +93,12 @@ export default function IntegrationsPage() {
       <Layout>
         {/* External Webhook Trigger */}
         <Layout.Section>
+          <PlanGate
+            currentPlan={currentPlan}
+            requiredPlan="premium"
+            featureName="External Webhook Trigger"
+            description="Let any external system start an import with a POST request. Available on the Premium plan."
+          >
           <Card>
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
@@ -91,6 +113,12 @@ export default function IntegrationsPage() {
                 </Badge>
               </InlineStack>
               <Divider />
+
+              {"error" in (actionData ?? {}) && (
+                <Banner tone="critical">
+                  <p>{(actionData as { error: string }).error}</p>
+                </Banner>
+              )}
 
               {newKey && (
                 <Banner tone="success" title="New key generated — copy it now">
@@ -149,6 +177,7 @@ export default function IntegrationsPage() {
               </InlineStack>
             </BlockStack>
           </Card>
+          </PlanGate>
         </Layout.Section>
 
         {/* API reference */}

@@ -6,6 +6,7 @@ import { unauthenticated } from "../shopify.server";
 import { fetchGoogleSheetAsCSV } from "../services/sheets.server";
 import { parseCSV } from "../services/parser.server";
 import { runImport } from "../services/importer.server";
+import { getCachedPlan, getLimits, getMonthlyImportCount } from "../services/plan.server";
 
 // POST /api/import-webhook
 // Headers: X-Import-Key: <raw key>
@@ -48,6 +49,32 @@ export async function action({ request }: ActionFunctionArgs) {
     data: { lastUsed: new Date() },
   });
 
+  // This endpoint runs real imports, so it has to answer to the same plan
+  // limits the in-app flows do. It previously enforced none of them: the
+  // feature is sold as Premium-only and the row and monthly caps applied
+  // everywhere else, but a key from any plan could import without limit.
+  const limits = getLimits(await getCachedPlan(shop));
+
+  if (!limits.externalWebhookEnabled) {
+    return json(
+      { error: "The external webhook API is available on the Premium plan.", planError: true },
+      { status: 403 }
+    );
+  }
+
+  if (limits.maxImportsPerMonth !== -1) {
+    const used = await getMonthlyImportCount(shop);
+    if (used >= limits.maxImportsPerMonth) {
+      return json(
+        {
+          error: `Monthly import limit reached (${limits.maxImportsPerMonth} imports).`,
+          planError: true,
+        },
+        { status: 403 }
+      );
+    }
+  }
+
   // Fetch the file
   const isSheets = fileUrl.includes("docs.google.com/spreadsheets");
   let buffer: Buffer;
@@ -71,6 +98,16 @@ export async function action({ request }: ActionFunctionArgs) {
     parseResult = await parseCSV(buffer);
   } catch (err) {
     return json({ error: `Parse error: ${err instanceof Error ? err.message : String(err)}` }, { status: 422 });
+  }
+
+  if (limits.maxRowsPerImport !== -1 && parseResult.totalRows > limits.maxRowsPerImport) {
+    return json(
+      {
+        error: `File has ${parseResult.totalRows} rows but the plan allows ${limits.maxRowsPerImport} per import.`,
+        planError: true,
+      },
+      { status: 403 }
+    );
   }
 
   const job = await prisma.importJob.create({
